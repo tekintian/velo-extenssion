@@ -1,9 +1,10 @@
+import { createRoot } from 'react-dom/client'
 import { useState, useEffect, useCallback } from 'react'
 import type { SdownConfig } from '@/types'
 import { DEFAULT_CONFIG } from '@/types'
 import '@/assets/options.css'
 
-export default function Options() {
+function Options() {
   const [config, setConfig] = useState<SdownConfig>({ ...DEFAULT_CONFIG })
   const [saved, setSaved] = useState(false)
 
@@ -117,3 +118,5 @@ export default function Options() {
     </div>
   )
 }
+
+createRoot(document.getElementById('root')!).render(<Options />)

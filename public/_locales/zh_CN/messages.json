@@ -1,0 +1,73 @@
+{
+  "ext_description": {
+    "message": "浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 sdown 桌面端下载"
+  },
+  "ext_name": {
+    "message": "sdown Extension"
+  },
+  "popup_paired": {
+    "message": "已配对（端口 $PORT$）",
+    "placeholders": {
+      "PORT": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_not_paired": {
+    "message": "未配对"
+  },
+  "popup_pair_button": {
+    "message": "配对桌面端"
+  },
+  "popup_repair_button": {
+    "message": "重新配对"
+  },
+  "popup_settings_button": {
+    "message": "设置"
+  },
+  "options_title": {
+    "message": "sdown 扩展设置"
+  },
+  "options_pairing_title": {
+    "message": "桌面端配对"
+  },
+  "options_port_label": {
+    "message": "桌面端端口"
+  },
+  "options_token_label": {
+    "message": "配对 Token"
+  },
+  "options_save_pairing": {
+    "message": "保存配对"
+  },
+  "options_test_connection": {
+    "message": "测试连接"
+  },
+  "options_push_title": {
+    "message": "推送配置"
+  },
+  "options_push_channel_label": {
+    "message": "推送通道"
+  },
+  "options_merge_format_label": {
+    "message": "合并格式"
+  },
+  "options_auto_push_label": {
+    "message": "自动推送（嗅探后自动下载）"
+  },
+  "options_save_config": {
+    "message": "保存配置"
+  },
+  "options_filter_title": {
+    "message": "广告过滤"
+  },
+  "options_threshold_label": {
+    "message": "评分阈值（默认 3）"
+  },
+  "options_enable_filter_label": {
+    "message": "启用广告分片过滤"
+  },
+  "options_save_filter": {
+    "message": "保存"
+  }
+}

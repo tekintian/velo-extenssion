@@ -1,4 +1,4 @@
-import { defineBackground } from 'wxt/sandbox'
+import { defineBackground } from 'wxt/utils/define-background'
 import { logger } from '@/lib/logger'
 import { initMessageRouter, registerHandler } from '@/background/messaging/router'
 import { PairingManager } from '@/background/pairing'

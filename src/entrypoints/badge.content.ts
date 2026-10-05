@@ -1,4 +1,4 @@
-import { defineContentScript } from 'wxt/sandbox'
+import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 
 const ADCLEAR_BADGE_ID = '__adclear_hls_badge__'

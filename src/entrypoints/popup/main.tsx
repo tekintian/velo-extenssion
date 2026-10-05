@@ -1,7 +1,8 @@
+import { createRoot } from 'react-dom/client'
 import { useState, useEffect, useCallback } from 'react'
 import '@/assets/popup.css'
 
-export default function Popup() {
+function Popup() {
   const [paired, setPaired] = useState(false)
   const [port, setPort] = useState(16888)
   const [token, setToken] = useState('')
@@ -127,3 +128,5 @@ export default function Popup() {
     </div>
   )
 }
+
+createRoot(document.getElementById('root')!).render(<Popup />)

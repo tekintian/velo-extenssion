@@ -7,8 +7,18 @@ export default defineConfig({
 
   modules: ['@wxt-dev/module-react'],
 
-  vite: () => ({
+  webExt: {
+    binaries: {
+      chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    },
+    chromiumArgs: ['--test-type'],
+  },
+
+  vite: ({ mode }) => ({
     plugins: [tailwindcss() as never],
+    define: {
+      __DEV__: mode === 'development',
+    },
     resolve: {
       alias: {
         '@': './src',

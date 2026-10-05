@@ -1,10 +1,9 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+declare const __DEV__: boolean | undefined
+
 function isDev(): boolean {
-  return (
-    typeof import.meta !== 'undefined' &&
-    (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true
-  )
+  return typeof __DEV__ !== 'undefined' && __DEV__ === true
 }
 
 function log(level: LogLevel, prefix: string, message: string, ...args: unknown[]): void {

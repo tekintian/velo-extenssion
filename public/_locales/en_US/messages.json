@@ -1,0 +1,73 @@
+{
+  "ext_description": {
+    "message": "Browser m3u8 sniffer + ad segment filter + push to sdown desktop for download"
+  },
+  "ext_name": {
+    "message": "sdown Extension"
+  },
+  "popup_paired": {
+    "message": "Paired (port $PORT$)",
+    "placeholders": {
+      "PORT": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_not_paired": {
+    "message": "Not paired"
+  },
+  "popup_pair_button": {
+    "message": "Pair with Desktop"
+  },
+  "popup_repair_button": {
+    "message": "Re-pair"
+  },
+  "popup_settings_button": {
+    "message": "Settings"
+  },
+  "options_title": {
+    "message": "sdown Extension Settings"
+  },
+  "options_pairing_title": {
+    "message": "Desktop Pairing"
+  },
+  "options_port_label": {
+    "message": "Desktop Port"
+  },
+  "options_token_label": {
+    "message": "Pairing Token"
+  },
+  "options_save_pairing": {
+    "message": "Save Pairing"
+  },
+  "options_test_connection": {
+    "message": "Test Connection"
+  },
+  "options_push_title": {
+    "message": "Push Configuration"
+  },
+  "options_push_channel_label": {
+    "message": "Push Channel"
+  },
+  "options_merge_format_label": {
+    "message": "Merge Format"
+  },
+  "options_auto_push_label": {
+    "message": "Auto Push (download automatically after sniffing)"
+  },
+  "options_save_config": {
+    "message": "Save Config"
+  },
+  "options_filter_title": {
+    "message": "Ad Filter"
+  },
+  "options_threshold_label": {
+    "message": "Score Threshold (default 3)"
+  },
+  "options_enable_filter_label": {
+    "message": "Enable ad segment filter"
+  },
+  "options_save_filter": {
+    "message": "Save"
+  }
+}
