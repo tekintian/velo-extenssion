@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Chrome/Edge 扩展自动更新清单
+  对应 T75：自托管 update.xml（不依赖 Google 服务）
+  发布时将 {version} 替换为实际版本号
+-->
+<gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
+  <app appid="sdown-extension">
+    <updatecheck codebase="https://dl.tekin.cn/sdown-extension/sdown-extension-{version}.crx" version="0.1.0" />
+  </app>
+</gupdate>
