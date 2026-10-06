@@ -1,3 +1,13 @@
+/**
+ * 配置/规则/指纹 导入导出 — 移植自 NDM io.js
+ *
+ * 用途：用户规则/待审建议/配置/指纹 的导出 JSON 与导入，支持重装备份 + 分享
+ *
+ * 导出 payload (schema=adclear-hls-backup, version=1):
+ *   { schema, version, exportedAt,
+ *     userRules, pendingSuggestions, hlsConfig, learnedFingerprints, samples, stats }
+ */
+
 import { persistentStorage } from '@/lib/storage'
 import { loadUserRules, saveUserRules } from './hls-rules'
 import { listPending } from './suggest'
@@ -27,13 +37,27 @@ export interface BackupPayload {
   readonly stats?: unknown
 }
 
+/**
+ * 构建导出 payload
+ */
 export async function buildExport(): Promise<BackupPayload> {
-  const payload: BackupPayload = { schema: SCHEMA, version: VERSION, exportedAt: Date.now() }
+  const payload: BackupPayload = {
+    schema: SCHEMA,
+    version: VERSION,
+    exportedAt: Date.now(),
+  }
+
+  // userRules
   const userRules = await loadUserRules()
+  // pendingSuggestions
   const pending = await listPending()
+  // hlsConfig
   const hlsConfig = await persistentStorage.get<unknown>(CONFIG_KEY)
+  // learnedFingerprints
   const learnedFingerprints = await persistentStorage.get<unknown>(LEARNED_KEY)
+  // samples
   const samples = await listSamples()
+  // stats
   const stats = await getStats()
 
   const p = payload as unknown as Record<string, unknown>
@@ -41,22 +65,28 @@ export async function buildExport(): Promise<BackupPayload> {
   if (pending.length) p.pendingSuggestions = pending
   if (hlsConfig) p.hlsConfig = hlsConfig
   if (learnedFingerprints) p.learnedFingerprints = learnedFingerprints
-  if (samples.length) p.samples = samples
+  if (samples.length) p.sample = samples
   p.stats = stats
 
   return p as unknown as BackupPayload
 }
 
+/**
+ * 应用导入
+ *
+ * @param strategy 'merge'（默认）合并 / 'replace' 覆盖
+ */
 export async function applyImport(
   imported: BackupPayload,
   strategy: 'merge' | 'replace' = 'merge',
 ): Promise<{ userRules: number; pending: number; samples: number; fingerprints: number }> {
   const result = { userRules: 0, pending: 0, samples: 0, fingerprints: 0 }
 
+  // userRules
   if (imported.userRules) {
-    const importedRules = imported.userRules as SiteRule[]
+    const importedRules = imported.userRules as Array<{ id: string; name: string; hostPattern: string; adUrlPatterns: string[]; scoreThreshold?: number; forceKeep?: string[] }>
     if (strategy === 'replace') {
-      await saveUserRules(importedRules)
+      await saveUserRules(importedRules as SiteRule[])
       result.userRules = importedRules.length
     } else {
       const existing = await loadUserRules()
@@ -67,8 +97,9 @@ export async function applyImport(
     }
   }
 
+  // pendingSuggestions (merge: 直接加，去重)
   if (imported.pendingSuggestions) {
-    const importedPending = imported.pendingSuggestions as Array<{ id: string }>
+    const importedPending = imported.pendingSuggestions as Array<{ id: string; hostPattern: string; adUrlPatterns: string[]; scoreThreshold: number; createdAt: number; sourceRule?: string }>
     const existing = (await persistentStorage.get<unknown[]>(SUGGEST_KEY)) ?? []
     const existingIds = new Set(existing.map((s) => (s as { id: string }).id))
     const newOnes = importedPending.filter((p) => !existingIds.has(p.id))
@@ -81,11 +112,13 @@ export async function applyImport(
     }
   }
 
+  // hlsConfig
   if (imported.hlsConfig) {
     const existing = strategy === 'replace' ? {} : (await persistentStorage.get<unknown>(CONFIG_KEY)) ?? {}
     await persistentStorage.set(CONFIG_KEY, { ...(existing as object), ...(imported.hlsConfig as object) })
   }
 
+  // learnedFingerprints
   if (imported.learnedFingerprints) {
     const importedFps = imported.learnedFingerprints as Record<string, unknown>
     if (strategy === 'replace') {
@@ -99,6 +132,7 @@ export async function applyImport(
     }
   }
 
+  // samples
   if (imported.samples) {
     const importedSamples = imported.samples as AdSample[]
     if (strategy === 'replace') {
@@ -114,9 +148,11 @@ export async function applyImport(
     }
   }
 
+  // stats (replace only, 不合并)
   if (imported.stats && strategy === 'replace') {
     await clearStats()
-    await persistentStorage.set(STATS_KEY, imported.stats)
+    const stats = imported.stats as { total: { ads: number; adDuration: number; contentDuration: number; reports: number }; byHost: Record<string, unknown>; byRule: Record<string, unknown>; byDay: Record<string, unknown>; recent: Array<{ host: string; ads: number; adDuration: number; rule: string | null; ts: number }> }
+    await persistentStorage.set(STATS_KEY, stats)
   }
 
   return result

@@ -3,9 +3,10 @@ import { logger } from '@/lib/logger'
 import { initMessageRouter, registerHandler } from '@/background/messaging/router'
 import { PairingManager } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
-import { registerWebRequestHandlers, isM3u8 } from '@/background/media/sniffer'
+import { registerWebRequestHandlers, isM3u8, getMediaItems } from '@/background/media/sniffer'
 import { setPushClient, pushHls, pushUrl, pushNormal } from '@/background/media/download-client'
 import { processPlaylist, buildConfig, DEFAULT_CONFIG } from '@/engine/hls/hls-filter'
+import { extractBaseName, persistCleanedContext, type CleanedContext } from '@/background/hls/handler'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type SdownConfig } from '@/types'
 import { configStore } from '@/lib/storage'
 import type { MediaDescriptor } from '@/types'
@@ -83,6 +84,10 @@ function registerHandlers(): void {
     return { ok: true }
   })
 
+  registerHandler('sdown-ping', async () => {
+    return { ok: true, version: chrome.runtime.getManifest().version }
+  })
+
   registerHandler('sdown-get-config', async () => {
     return config
   })
@@ -126,7 +131,7 @@ function registerHandlers(): void {
     return { ok: valid }
   })
 
-  registerHandler('processHlsPlaylist', async (message) => {
+  registerHandler('processHlsPlaylist', async (message, _sender) => {
     const { text, baseUrl, pageUrl } = (message as { payload?: { text?: string; baseUrl?: string; pageUrl?: string } }).payload ?? {}
     if (!text || !baseUrl) return { mode: 'disabled' as const }
 
@@ -145,7 +150,48 @@ function registerHandlers(): void {
         pageHost,
       )
 
-      const result = await processPlaylist(text, baseUrl, pageUrl ?? '', cfg)
+      // 从嗅探器提取 requestHeaders 供指纹 fetch 认证
+      let hlsAuthHeaders: Record<string, string> | undefined
+      try {
+        const tabId = _sender.tab?.id ?? 0
+        const items = getMediaItems(tabId)
+        const m3u8Item = items.find((i) => i.ext === 'm3u8' || i.ext === 'm3u')
+        if (m3u8Item?.requestHeaders && Object.keys(m3u8Item.requestHeaders).length > 0) {
+          hlsAuthHeaders = m3u8Item.requestHeaders
+        }
+      } catch { /* ignore */ }
+
+      const result = await processPlaylist(text, baseUrl, pageUrl ?? '', cfg, hlsAuthHeaders)
+
+      // 持久化 cleaned m3u8 + 广播 hlsFilterResult 给 player-panel
+      if (_sender.tab?.id && 'cleaned' in result && typeof result.cleaned === 'string') {
+        const baseName = extractBaseName(baseUrl)
+        const ctx: CleanedContext = {
+          cleaned: result.cleaned,
+          baseName,
+          report: result.report as CleanedContext['report'],
+          segments: ('segments' in result ? result.segments : []) as CleanedContext['segments'],
+          reasons: ('reasons' in result ? result.reasons : {}) as Record<number, string[]>,
+          pageHost,
+          baseUrl,
+          detectedAt: Date.now(),
+        }
+        await persistCleanedContext(_sender.tab.id, ctx)
+
+        // 广播 hlsFilterResult 给 player-panel
+        const adRanges = 'adRanges' in result ? result.adRanges : []
+        try {
+          await chrome.tabs.sendMessage(_sender.tab.id, {
+            type: 'hlsFilterResult',
+            adRanges,
+            baseName,
+            report: result.report,
+          })
+          logger.info('[hls] hlsFilterResult broadcasted to player-panel, baseName:', baseName)
+        } catch {
+          // player-panel 未注入 — 忽略
+        }
+      }
 
       const ret: Record<string, unknown> = { mode: result.mode }
       if ('url' in result) ret.url = result.url
@@ -204,7 +250,19 @@ async function handleDetected(descriptor: MediaDescriptor, _details: unknown): P
 
 async function handleHls(descriptor: MediaDescriptor): Promise<void> {
   try {
-    const resp = await fetch(descriptor.url, { credentials: 'include' })
+    // fetch m3u8 时携带认证头
+    const fetchHeaders: Record<string, string> = {}
+    try {
+      const cookieList = await chrome.cookies.getAll({ url: descriptor.url })
+      if (cookieList.length > 0) {
+        fetchHeaders['Cookie'] = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
+      }
+    } catch { /* ignore */ }
+    const fetchInit: RequestInit = { cache: 'no-store' }
+    if (Object.keys(fetchHeaders).length > 0) {
+      fetchInit.headers = fetchHeaders
+    }
+    const resp = await fetch(descriptor.url, fetchInit)
     const text = await resp.text()
 
     let pageHost = ''
@@ -221,7 +279,17 @@ async function handleHls(descriptor: MediaDescriptor): Promise<void> {
       pageHost,
     )
 
-    const result = await processPlaylist(text, descriptor.url, descriptor.pageUrl, cfg)
+    // 从嗅探器提取 requestHeaders 供指纹 fetch 认证
+    let hlsAuthHeaders: Record<string, string> | undefined
+    try {
+      const items = getMediaItems(0)
+      const m3u8Item = items.find((i) => i.ext === 'm3u8' || i.ext === 'm3u')
+      if (m3u8Item?.requestHeaders && Object.keys(m3u8Item.requestHeaders).length > 0) {
+        hlsAuthHeaders = m3u8Item.requestHeaders
+      }
+    } catch { /* ignore */ }
+
+    const result = await processPlaylist(text, descriptor.url, descriptor.pageUrl, cfg, hlsAuthHeaders)
 
     if (result.mode === 'master') {
       const variants = ('variants' in result ? result.variants : []) as Array<{ url: string }>

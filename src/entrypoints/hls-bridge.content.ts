@@ -1,99 +1,104 @@
-import { defineContentScript } from 'wxt/utils/define-content-script'
+/**
+ * HLS 过滤 — isolated world bridge content script
+ *
+ * 职责：
+ *   MAIN world 的 hls.content.ts 拦截了 m3u8 fetch/XHR，
+ *   但 MAIN world 不能调 chrome.runtime.sendMessage。
+ *   本 script 在 isolated world 监听 window.postMessage，
+ *   转发给 background processHlsPlaylist，再把结果 postMessage 回 MAIN world。
+ *
+ *   这样 MAIN world 和 background 之间通过 isolated world 间接通信。
+ */
+
+import { defineContentScript } from 'wxt/sandbox'
 import { logger } from '@/lib/logger'
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
+  allFrames: true,
   runAt: 'document_start',
+  // 默认 isolated world（不加 world: 'MAIN'）
 
   main() {
-    window.addEventListener('message', (event) => {
-      if (event.source !== window) return
-      const data = event.data as Record<string, unknown> | undefined
-      if (!data) return
+    logger.info('[AdClear HLS bridge] isolated world loaded, location:', location.href)
 
-      if (data.source === 'sdown-hls') {
-        handleSdownMessage(data as { type?: string; payload?: Record<string, string> })
-      } else if (data.source === 'adclear-hls') {
-        handleAdClearBroadcast(data as { type?: string; payload?: Record<string, string> })
-      } else if (data.__adclear && data.type === 'processHlsPlaylist') {
-        handleAdClearMessage(data as { __adclear?: string; type?: string; text?: string; baseUrl?: string; pageUrl?: string })
+    // 启动时查询 HLS 委派状态，通知 MAIN world 是否应该 hook
+    try {
+      chrome.runtime.sendMessage({ type: 'getHlsDelegation' }).then((resp) => {
+        const r = resp as { mode?: string; reason?: string } | null
+        if (r?.mode === 'active') {
+          window.postMessage({ __adclear_hls_delegate: true, mode: 'active', reason: r.reason }, '*')
+          logger.info('[AdClear HLS bridge] delegation active, notified MAIN world')
+        } else {
+          window.postMessage({ __adclear_hls_delegate: true, mode: 'delegated', reason: r?.reason }, '*')
+          logger.info('[AdClear HLS bridge] delegation delegated, reason:', r?.reason)
+        }
+      }).catch((e) => {
+        logger.warn('[AdClear HLS bridge] getHlsDelegation failed:', (e as Error).message)
+      })
+    } catch {
+      // ignore
+    }
+
+    // 监听委派状态变化（background 广播）
+    chrome.runtime.onMessage.addListener((message: unknown) => {
+      if (!message || typeof message !== 'object') return false
+      const msg = message as { type?: string; mode?: string; reason?: string }
+      if (msg.type === 'hlsDelegationChanged') {
+        window.postMessage({ __adclear_hls_delegate: true, mode: msg.mode, reason: msg.reason }, '*')
+        logger.info('[AdClear HLS bridge] delegation changed:', msg.mode, msg.reason)
       }
+      return false
     })
 
-    logger.info('HLS bridge content script ready (dual-source: sdown + adclear)')
+    window.addEventListener('message', async (e: MessageEvent) => {
+      if (e.source !== window) return
+      const data = e.data as { __adclear?: string; type?: string; text?: string; baseUrl?: string; pageUrl?: string } | null
+      if (!data || !data.__adclear || data.type !== 'processHlsPlaylist') return
+
+      const reqId = data.__adclear
+      logger.info('[AdClear HLS bridge] received processHlsPlaylist from MAIN, reqId:', reqId)
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'processHlsPlaylist',
+          payload: {
+            text: data.text ?? '',
+            baseUrl: data.baseUrl ?? '',
+            pageUrl: data.pageUrl ?? '',
+          },
+        })
+        logger.info('[AdClear HLS bridge] background response mode:', (response as { mode?: string })?.mode)
+        const filtered = extractFilteredM3u8(response)
+        logger.info('[AdClear HLS bridge] extracted filtered:', filtered !== null ? `len=${filtered.length}` : 'null')
+        window.postMessage({ __adclear: reqId, filtered }, '*')
+        if (filtered !== null && data.baseUrl) {
+          window.postMessage({
+            source: 'adclear-hls',
+            type: 'm3u8-filtered',
+            payload: { cleaned: filtered, baseUrl: data.baseUrl, pageUrl: data.pageUrl ?? '' },
+          }, '*')
+        }
+      } catch (err) {
+        logger.warn('[AdClear HLS bridge] error:', (err as Error).message)
+        window.postMessage({ __adclear: reqId, filtered: null, error: (err as Error).message }, '*')
+      }
+    })
   },
 })
 
-function handleSdownMessage(data: { type?: string; payload?: Record<string, string> }): void {
-  const { type, payload } = data
-
-  if (type === 'm3u8-intercepted' && payload) {
-    void handleM3u8Intercepted(payload)
-  } else if (type === 'mse-detected' && payload) {
-    void handleMseDetected(payload)
+/**
+ * 从 processHlsPlaylist 响应里提取清洗后的 m3u8 文本
+ *
+ * 响应结构:
+ *   mode='m3u8-file' / 'data-url'  → cleaned 字段
+ *   mode='data-url'                → 也可用 url 字段（data: URL）
+ *   其它 mode                       → null（原样放行）
+ */
+function extractFilteredM3u8(response: unknown): string | null {
+  if (!response || typeof response !== 'object') return null
+  const r = response as { mode?: string; cleaned?: string; url?: string }
+  if (r.mode === 'm3u8-file' || r.mode === 'data-url') {
+    return r.cleaned ?? null
   }
-}
-
-function handleAdClearMessage(data: { __adclear?: string; type?: string; text?: string; baseUrl?: string; pageUrl?: string }): void {
-  if (data.type === 'processHlsPlaylist') {
-    void handleM3u8Intercepted({
-      text: data.text ?? '',
-      baseUrl: data.baseUrl ?? '',
-      pageUrl: data.pageUrl ?? '',
-    })
-  }
-}
-
-function handleAdClearBroadcast(data: { type?: string; payload?: Record<string, string> }): void {
-  if (data.type === 'm3u8-filtered' && data.payload) {
-    void handleAdClearFiltered(data.payload)
-  }
-}
-
-async function handleAdClearFiltered(payload: Record<string, string>): Promise<void> {
-  try {
-    await chrome.runtime.sendMessage({
-      type: 'sdown-push-filtered-m3u8',
-      payload: {
-        cleaned: payload.cleaned,
-        baseUrl: payload.baseUrl,
-        pageUrl: payload.pageUrl,
-      },
-    })
-    logger.info('AdClear filtered m3u8 forwarded to sdown background for push')
-  } catch (e) {
-    logger.warn('Forward AdClear filtered result failed:', (e as Error).message)
-  }
-}
-
-async function handleM3u8Intercepted(payload: Record<string, string>): Promise<void> {
-  try {
-    const result = await chrome.runtime.sendMessage({
-      type: 'processHlsPlaylist',
-      payload: {
-        text: payload.text,
-        baseUrl: payload.baseUrl,
-        pageUrl: payload.pageUrl,
-      },
-    })
-
-    if (result?.mode === 'm3u8-file' && result.cleaned) {
-      logger.info('HLS ad filter applied, cleaned m3u8 available')
-      window.postMessage({ source: 'sdown-hls', type: 'm3u8-cleaned', payload: { cleaned: result.cleaned, baseUrl: payload.baseUrl } }, '*')
-    }
-  } catch (e) {
-    logger.warn('processHlsPlaylist failed:', (e as Error).message)
-  }
-}
-
-async function handleMseDetected(payload: Record<string, string>): Promise<void> {
-  try {
-    await chrome.runtime.sendMessage({
-      type: 'sdown-mse-source',
-      mimeType: payload.mimeType,
-      url: payload.url,
-    })
-  } catch (e) {
-    logger.warn('MSE notify failed:', (e as Error).message)
-  }
+  return null
 }

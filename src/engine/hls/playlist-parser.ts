@@ -1,14 +1,32 @@
+/**
+ * HLS m3u8 播放列表解析
+ *
+ * 移植自 NDM ad-filter.js parsePlaylist
+ * 纯函数，无副作用，不依赖浏览器 API
+ */
+
 import type { ParsedPlaylist, Segment } from './types'
 
+/**
+ * 从 URL 提取尾号（用于跳号检测）
+ *
+ * 例：https://cdn.x/v/f5ebeddd91e0763677.ts → 763677
+ */
 export function extractSeqNum(url: string): number | null {
   const m = url.match(/(\d+)(?=\.\w+(?:\?|#|$))/)
   return m ? parseInt(m[1]!, 10) : null
 }
 
+/**
+ * 判断是否为 master 播放列表（含 EXT-X-STREAM-INF）
+ */
 export function isMasterPlaylist(text: string): boolean {
   return /#EXT-X-STREAM-INF:/i.test(text)
 }
 
+/**
+ * 解析 master 播放列表的 variants
+ */
 export function parseMasterPlaylist(
   text: string,
   baseUrl: string,
@@ -38,6 +56,9 @@ export function parseMasterPlaylist(
   return variants
 }
 
+/**
+ * 完整解析媒体播放列表
+ */
 export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
   const lines = text.split(/\r?\n/)
   const headerTags: string[] = []
@@ -67,6 +88,7 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
       const tag = tagFull.toUpperCase()
 
       switch (tag) {
+        // 头部标签
         case 'EXT-X-VERSION':
         case 'EXT-X-TARGETDURATION':
         case 'EXT-X-PLAYLIST-TYPE':
@@ -79,12 +101,16 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
             mediaSeqStart = parseInt(args, 10) || 0
           }
           break
+
+        // 加密 / init segment（保留，rebuild 时绝对化）
         case 'EXT-X-KEY':
         case 'EXT-X-MAP':
         case 'EXT-X-SESSION-DATA':
         case 'EXT-X-MEDIA':
           headerTags.push(line)
           break
+
+        // 分片描述
         case 'EXTINF': {
           const comma = args.indexOf(',')
           pendingExtinf = {
@@ -96,6 +122,8 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
         case 'EXT-X-BYTERANGE':
           pendingByterange = args
           break
+
+        // 广告信令
         case 'EXT-X-DISCONTINUITY':
           pendingDiscontinuity = true
           break
@@ -121,6 +149,7 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
           cueState = null
           break
         case 'EXT-X-DATERANGE':
+          // DATERANGE 里若 CLASS 含 ad/sponsor/promo 或带 SCTE35-OUT=/SCTE35-CMD= 视为广告块
           if (
             /CLASS="[^"]*(?:com\.apple\.ad|ad|sponsor|promo|spot)[^"]*"/i.test(args) ||
             /SCTE35-(OUT|CMD)=/i.test(args)
@@ -129,10 +158,13 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
             cueState = 'out'
           }
           break
+
         default:
+          // 其他标签忽略
           break
       }
     } else {
+      // 分片 URL 行
       let absUrl: string
       try {
         absUrl = new URL(line, baseUrl).href
@@ -154,6 +186,7 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
       pendingExtinf = null
       pendingByterange = null
       pendingDiscontinuity = false
+      // cueState / pendingScte35 / pendingDateRangeAd 保持到对应 IN 标签才清
     }
   }
 
