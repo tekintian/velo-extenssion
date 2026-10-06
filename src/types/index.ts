@@ -92,3 +92,25 @@ export interface AdRange {
   end: number
   duration: number
 }
+
+export interface Settings {
+  enableHlsAdFilter: boolean
+  enableLogging: boolean
+  enableAdSkip: boolean
+  showPageBadge: boolean
+  downloadClient: 'aria2' | 'ndm' | 'sdown' | 'native'
+  rpcHost: string
+  rpcPort: number
+  rpcSecret: string
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  enableHlsAdFilter: true,
+  enableLogging: false,
+  enableAdSkip: true,
+  showPageBadge: true,
+  downloadClient: 'sdown',
+  rpcHost: '127.0.0.1',
+  rpcPort: 16888,
+  rpcSecret: '',
+}

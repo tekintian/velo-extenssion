@@ -6,7 +6,7 @@ import { createPushClient } from '@/background/push-client'
 import { registerWebRequestHandlers, isM3u8, getMediaItems } from '@/background/media/sniffer'
 import { setPushClient, pushHls, pushUrl, pushNormal } from '@/background/media/download-client'
 import { processPlaylist, buildConfig, DEFAULT_CONFIG } from '@/engine/hls/hls-filter'
-import { extractBaseName, persistCleanedContext, type CleanedContext } from '@/background/hls/handler'
+import { registerHlsHandlers } from '@/background/hls/handler'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type SdownConfig } from '@/types'
 import { configStore } from '@/lib/storage'
 import type { MediaDescriptor } from '@/types'
@@ -41,12 +41,14 @@ let pushClient: ReturnType<typeof createPushClient> | null = null
 let config: SdownConfig = { ...DEFAULT_SDOWN_CONFIG }
 
 function registerHandlers(): void {
+  registerHlsHandlers()
+
   registerHandler('sdown-get-status', async () => {
     return { paired: !!pushClient, config }
   })
 
-  registerHandler('sdown-mse-source', async (message) => {
-    logger.info('MSE detected media:', (message as { mimeType?: string }).mimeType, (message as { url?: string }).url)
+  registerHandler<{ mimeType?: string; url?: string }>('sdown-mse-source', async (message) => {
+    logger.info('MSE detected media:', message.payload.mimeType, message.payload.url)
     return { ok: true }
   })
 
@@ -54,8 +56,8 @@ function registerHandlers(): void {
     return { ok: true }
   })
 
-  registerHandler('sdown-push-filtered-m3u8', async (message) => {
-    const { cleaned, baseUrl, pageUrl } = (message as { payload?: { cleaned?: string; baseUrl?: string; pageUrl?: string } }).payload ?? {}
+  registerHandler<{ cleaned: string; baseUrl: string; pageUrl?: string }>('sdown-push-filtered-m3u8', async (message) => {
+    const { cleaned, baseUrl, pageUrl } = message.payload
     if (!cleaned || !baseUrl) return { ok: false, error: 'missing cleaned or baseUrl' }
 
     try {
@@ -92,8 +94,8 @@ function registerHandlers(): void {
     return config
   })
 
-  registerHandler('sdown-save-config', async (message) => {
-    const newConfig = (message as { config?: Partial<SdownConfig> }).config
+  registerHandler<{ config: Partial<SdownConfig> }>('sdown-save-config', async (message) => {
+    const newConfig = message.payload.config
     if (newConfig) {
       config = { ...config, ...newConfig }
       await configStore.set(config)
@@ -101,8 +103,8 @@ function registerHandlers(): void {
     return { ok: true }
   })
 
-  registerHandler('sdown-save-pairing', async (message) => {
-    const { token, port } = (message as { token?: string; port?: number })
+  registerHandler<{ token: string; port?: number }>('sdown-save-pairing', async (message) => {
+    const { token, port } = message.payload
     if (!token) return { ok: false, error: 'Token required' }
     const pairing = new PairingManager()
     await pairing.savePairing(token, port ?? DEFAULT_SDOWN_CONFIG.port)
@@ -124,86 +126,11 @@ function registerHandlers(): void {
     return { ok: true }
   })
 
-  registerHandler('sdown-validate-pairing', async (message) => {
-    const { token, port } = (message as { token?: string; port?: number })
+  registerHandler<{ token: string; port?: number }>('sdown-validate-pairing', async (message) => {
+    const { token, port } = message.payload
     const pairing = new PairingManager()
     const valid = await pairing.validatePairing(token ?? '', port ?? DEFAULT_SDOWN_CONFIG.port)
     return { ok: valid }
-  })
-
-  registerHandler('processHlsPlaylist', async (message, _sender) => {
-    const { text, baseUrl, pageUrl } = (message as { payload?: { text?: string; baseUrl?: string; pageUrl?: string } }).payload ?? {}
-    if (!text || !baseUrl) return { mode: 'disabled' as const }
-
-    try {
-      let pageHost = ''
-      try {
-        if (pageUrl) pageHost = new URL(pageUrl).host
-      } catch { /* ignore */ }
-
-      const cfg = await buildConfig(
-        {
-          ...DEFAULT_CONFIG,
-          enabled: config.enableFilter,
-          scoreThreshold: config.scoreThreshold,
-        },
-        pageHost,
-      )
-
-      // 从嗅探器提取 requestHeaders 供指纹 fetch 认证
-      let hlsAuthHeaders: Record<string, string> | undefined
-      try {
-        const tabId = _sender.tab?.id ?? 0
-        const items = getMediaItems(tabId)
-        const m3u8Item = items.find((i) => i.ext === 'm3u8' || i.ext === 'm3u')
-        if (m3u8Item?.requestHeaders && Object.keys(m3u8Item.requestHeaders).length > 0) {
-          hlsAuthHeaders = m3u8Item.requestHeaders
-        }
-      } catch { /* ignore */ }
-
-      const result = await processPlaylist(text, baseUrl, pageUrl ?? '', cfg, hlsAuthHeaders)
-
-      // 持久化 cleaned m3u8 + 广播 hlsFilterResult 给 player-panel
-      if (_sender.tab?.id && 'cleaned' in result && typeof result.cleaned === 'string') {
-        const baseName = extractBaseName(baseUrl)
-        const ctx: CleanedContext = {
-          cleaned: result.cleaned,
-          baseName,
-          report: result.report as CleanedContext['report'],
-          segments: ('segments' in result ? result.segments : []) as CleanedContext['segments'],
-          reasons: ('reasons' in result ? result.reasons : {}) as Record<number, string[]>,
-          pageHost,
-          baseUrl,
-          detectedAt: Date.now(),
-        }
-        await persistCleanedContext(_sender.tab.id, ctx)
-
-        // 广播 hlsFilterResult 给 player-panel
-        const adRanges = 'adRanges' in result ? result.adRanges : []
-        try {
-          await chrome.tabs.sendMessage(_sender.tab.id, {
-            type: 'hlsFilterResult',
-            adRanges,
-            baseName,
-            report: result.report,
-          })
-          logger.info('[hls] hlsFilterResult broadcasted to player-panel, baseName:', baseName)
-        } catch {
-          // player-panel 未注入 — 忽略
-        }
-      }
-
-      const ret: Record<string, unknown> = { mode: result.mode }
-      if ('url' in result) ret.url = result.url
-      if ('cleaned' in result) ret.cleaned = result.cleaned
-      ret.report = result.report
-      if ('segments' in result) ret.segments = result.segments
-      if ('adRanges' in result) ret.adRanges = result.adRanges
-      return ret
-    } catch (e) {
-      logger.error('processHlsPlaylist failed:', (e as Error).message)
-      return { mode: 'disabled' as const, error: (e as Error).message }
-    }
   })
 }
 

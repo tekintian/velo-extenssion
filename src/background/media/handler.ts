@@ -13,6 +13,7 @@ import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
 import { clearMediaItems, getMediaItems, startSniffer, stopSniffer, isSnifferRunning, addMediaItemExternal, pairDashItems } from './sniffer'
 import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToSdownDash } from './download-client'
+import type { DownloadClientConfig } from './types'
 
 /** 启动媒体嗅探（webRequest 监听），由 background.ts initBackground 调用 */
 export function startMediaSniffer(): void {
@@ -35,20 +36,20 @@ export function registerMediaHandlers(): void {
     return { tabId: sender.tab?.id ?? 0 }
   })
 
-  registerHandler('getMediaItems', async (message) => {
+  registerHandler<{ tabId: number }>('getMediaItems', async (message) => {
     const { tabId } = message.payload
     pairDashItems(tabId)
     return getMediaItems(tabId)
   })
 
-  registerHandler('clearMediaItems', async (message) => {
+  registerHandler<{ tabId: number }>('clearMediaItems', async (message) => {
     const { tabId } = message.payload
     clearMediaItems(tabId)
     return { success: true as const }
   })
 
   // 站点特殊抓取（Facebook/Vimeo）content script 主动加媒体项
-  registerHandler('addMediaItem', async (message, sender) => {
+  registerHandler<{ url: string; label: string; ext: string }>('addMediaItem', async (message, sender) => {
     const { url, label, ext } = message.payload
     const tabId = sender.tab?.id ?? 0
     if (tabId === 0) return { success: true as const }
@@ -57,7 +58,7 @@ export function registerMediaHandlers(): void {
     return { success: true as const }
   })
 
-  registerHandler('sendToDownload', async (message, sender) => {
+  registerHandler<{ url: string; fileName?: string; pageUrl?: string; contentType?: string; contentDisposition?: string; method?: string; requestBody?: string; requestHeaders?: Record<string, string> }>('sendToDownload', async (message, sender) => {
     const { url, fileName, pageUrl, contentType, contentDisposition, method, requestBody, requestHeaders } = message.payload
     logger.info('[media] sendToDownload: url=', url?.slice(0, 80), 'fileName=', fileName, 'method=', method)
     if (!url) {
@@ -86,7 +87,7 @@ export function registerMediaHandlers(): void {
     })
   })
 
-  registerHandler('sendToDashDownload', async (message, sender) => {
+  registerHandler<{ videoUrl: string; audioUrl: string; fileName?: string; pageUrl?: string }>('sendToDashDownload', async (message, sender) => {
     const { videoUrl, audioUrl, fileName, pageUrl } = message.payload
     logger.info('[media] sendToDashDownload: video=', videoUrl?.slice(0, 80), 'audio=', audioUrl?.slice(0, 80))
     if (!videoUrl || !audioUrl) {
@@ -153,16 +154,16 @@ export function registerMediaHandlers(): void {
     return await getDownloadConfig()
   })
 
-  registerHandler('setDownloadConfig', async (message) => {
+  registerHandler<Partial<DownloadClientConfig>>('setDownloadConfig', async (message) => {
     const cfg = message.payload
     await setDownloadConfig({
-      client: cfg.client as 'ndm' | 'aria2' | 'sdown' | 'native',
-      rpcHost: cfg.rpcHost,
-      rpcPort: cfg.rpcPort,
-      rpcSecret: cfg.rpcSecret,
-      sdownHost: cfg.sdownHost,
-      sdownPort: cfg.sdownPort,
-      sdownToken: cfg.sdownToken,
+      client: cfg.client ?? 'native',
+      rpcHost: cfg.rpcHost ?? 'localhost',
+      rpcPort: cfg.rpcPort ?? 16816,
+      rpcSecret: cfg.rpcSecret ?? '',
+      sdownHost: cfg.sdownHost ?? '127.0.0.1',
+      sdownPort: cfg.sdownPort ?? 16888,
+      sdownToken: cfg.sdownToken ?? '',
     })
     logger.info('[media] download config saved:', cfg.client)
     return { success: true as const }

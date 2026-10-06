@@ -47,7 +47,7 @@ export interface CleanedContext {
 const CLEANED_KEY = 'hlsLastCleaned'
 
 export function registerHlsHandlers(): void {
-  registerHandler('processHlsPlaylist', async (message, _sender) => {
+  registerHandler<{ text: string; baseUrl: string; pageUrl: string }>('processHlsPlaylist', async (message, _sender) => {
     const { text, baseUrl, pageUrl } = message.payload
     logger.info('[hls] processHlsPlaylist called, baseUrl:', baseUrl.slice(0, 80), 'tabId:', _sender.tab?.id, 'textLen:', text.length)
 
@@ -192,14 +192,14 @@ export function registerHlsHandlers(): void {
     return await listPending()
   })
 
-  registerHandler('approveSuggestion', async (message) => {
+  registerHandler<{ id: string }>('approveSuggestion', async (message) => {
     const { id } = message.payload
     const ok = await approve(id)
     if (!ok) throw new Error('Suggestion not found')
     return { success: true as const }
   })
 
-  registerHandler('dismissSuggestion', async (message) => {
+  registerHandler<{ id: string }>('dismissSuggestion', async (message) => {
     const { id } = message.payload
     const ok = await dismiss(id)
     if (!ok) throw new Error('Suggestion not found')
@@ -211,7 +211,7 @@ export function registerHlsHandlers(): void {
     return await listSamples()
   })
 
-  registerHandler('removeSample', async (message) => {
+  registerHandler<{ id: string }>('removeSample', async (message) => {
     const { id } = message.payload
     await removeSample(id)
     return { success: true as const }
@@ -222,13 +222,13 @@ export function registerHlsHandlers(): void {
     return { success: true as const }
   })
 
-  registerHandler('setSampleNote', async (message) => {
+  registerHandler<{ id: string; note: string }>('setSampleNote', async (message) => {
     const { id, note } = message.payload
     await setSampleNote(id, note)
     return { success: true as const }
   })
 
-  registerHandler('captureSample', async (message) => {
+  registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message) => {
     const { tabId, currentTime } = message.payload
     const ctx = await loadCleanedContext(tabId)
     if (!ctx || !ctx.segments || ctx.segments.length === 0) {
@@ -261,9 +261,9 @@ export function registerHlsHandlers(): void {
     return await buildExport()
   })
 
-  registerHandler('importHlsBackup', async (message) => {
+  registerHandler<{ data: BackupPayload; strategy: 'merge' | 'replace' }>('importHlsBackup', async (message) => {
     const { data, strategy } = message.payload
-    const result = await applyImport(data as BackupPayload, strategy)
+    const result = await applyImport(data, strategy)
     return result
   })
 
@@ -284,7 +284,7 @@ export function registerHlsHandlers(): void {
     }
   })
 
-  registerHandler('setHlsFingerprintConfig', async (message) => {
+  registerHandler<Record<string, unknown>>('setHlsFingerprintConfig', async (message) => {
     const cfg = message.payload
     const existing = (await persistentStorage.get<Record<string, unknown>>('hlsFilterConfig')) ?? {}
     await persistentStorage.set('hlsFilterConfig', { ...existing, ...cfg })
@@ -313,7 +313,7 @@ export function registerHlsHandlers(): void {
     }
   })
 
-  registerHandler('setHlsFullConfig', async (message) => {
+  registerHandler<Record<string, unknown>>('setHlsFullConfig', async (message) => {
     const cfg = message.payload
     const existing = (await persistentStorage.get<Record<string, unknown>>('hlsFilterConfig')) ?? {}
     await persistentStorage.set('hlsFilterConfig', { ...existing, ...cfg })
@@ -321,7 +321,7 @@ export function registerHlsHandlers(): void {
     return { success: true as const }
   })
 
-  registerHandler('refreshHlsRemoteRules', async (message) => {
+  registerHandler<{ url: string }>('refreshHlsRemoteRules', async (message) => {
     const { url } = message.payload
     const result = await refreshRemoteRules(url)
     logger.info('[hls] remote rules refreshed:', result.rules, 'rules')
@@ -329,7 +329,7 @@ export function registerHlsHandlers(): void {
   })
 
   // popup 查询当前 tab 最近检测信息
-  registerHandler('getLastDetect', async (message) => {
+  registerHandler<{ tabId: number }>('getLastDetect', async (message) => {
     const { tabId } = message.payload
     const ctx = await loadCleanedContext(tabId)
     if (!ctx) return null
@@ -337,7 +337,7 @@ export function registerHlsHandlers(): void {
   })
 
   // === 阶段 3: m3u8 下载（ts→绝对地址已由 rebuildPlaylist 处理）===
-  registerHandler('downloadCleanedM3u8', async (message, sender) => {
+  registerHandler<{ tabId: number; fileName?: string }>('downloadCleanedM3u8', async (message, sender) => {
     const { tabId, fileName: payloadFileName } = message.payload
     const ctx = await loadCleanedContext(tabId)
     if (!ctx || !ctx.cleaned) {

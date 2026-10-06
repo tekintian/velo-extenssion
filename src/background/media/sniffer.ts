@@ -19,6 +19,7 @@ import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-f
 import { persistentStorage } from '@/lib/storage'
 import { settingsStore } from '@/lib/storage'
 import { DEFAULT_SETTINGS } from '@/types'
+import type { MediaDescriptor } from '@/types'
 
 /** NDM 的 B 正则：媒体扩展名（嗅探所有音视频，但 .ts 分片除外 — 太多无意义） */
 const MEDIA_EXT_RE = /^(?:FLV|SWF|MP3|MP4|M4V|F4F|F4V|M4A|M4S|MPG|MPEG|MPEG4|MPE|AVI|WMV|WMA|WAV|WAVE|ASF|RM|RAM|OGG|OGV|OGM|OGA|MOV|MID|MIDI|3GP|3GPP|QT|WEBM|MKV|AAC|RMVB|VTT|SRT|M3U8|M3U)$/i
@@ -537,6 +538,24 @@ function addMediaItem(tabId: number, item: MediaItem): void {
   if (list.length > MAX_PER_TAB) {
     list.splice(0, list.length - MAX_PER_TAB)
   }
+
+  // 触发外部检测回调（供 background.ts registerWebRequestHandlers 使用）
+  if (_onDetectedCallback) {
+    const descriptor: MediaDescriptor = {
+      url: item.url,
+      pageUrl: '',
+      method: item.method,
+      ext: `.${item.ext}`,
+      mime: item.contentType,
+      contentLength: item.size,
+      contentType: item.contentType,
+      contentDisposition: item.contentDisposition,
+      headers: item.requestHeaders ?? {},
+    }
+    _onDetectedCallback(descriptor, item).catch((e) => {
+      logger.warn('[sniffer] onDetected callback failed:', (e as Error).message)
+    })
+  }
 }
 
 function getHeader(headers: chrome.webRequest.HttpHeader[], name: string): string | undefined {
@@ -943,3 +962,31 @@ export function getDashPairs(tabId: number): DashPair[] {
   }
   return pairs
 }
+
+/** 判断 MediaDescriptor 是否为 m3u8 播放列表 */
+export function isM3u8(descriptor: { ext: string; contentType?: string; mime?: string }): boolean {
+  return descriptor.ext === '.m3u8'
+    || descriptor.ext === '.m3u'
+    || /mpegurl/i.test(descriptor.contentType ?? '')
+    || /mpegurl/i.test(descriptor.mime ?? '')
+}
+
+/** 注册 webRequest 拦截处理器（供 background.ts 调用） */
+export function registerWebRequestHandlers(
+  onDetected: (descriptor: MediaDescriptor, details: unknown) => Promise<void>,
+): void {
+  startSniffer()
+  _onDetectedCallback = onDetected
+}
+
+/** 获取指定 URL 的 Cookie 字符串 */
+export async function getCookieString(url: string): Promise<string> {
+  try {
+    const cookieList = await chrome.cookies.getAll({ url })
+    return cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
+  } catch {
+    return ''
+  }
+}
+
+let _onDetectedCallback: ((descriptor: MediaDescriptor, details: unknown) => Promise<void>) | null = null

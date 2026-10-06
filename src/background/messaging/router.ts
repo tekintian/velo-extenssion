@@ -1,20 +1,26 @@
 import { logger } from '@/lib/logger'
 
+export interface TypedMessage<T = unknown> {
+  type: string
+  payload: T
+  [key: string]: unknown
+}
+
 type AnyHandler = (
-  message: Record<string, unknown>,
+  message: TypedMessage,
   sender: chrome.runtime.MessageSender,
 ) => unknown | Promise<unknown> | true
 
 const handlers = new Map<string, AnyHandler>()
 
-export function registerHandler(
+export function registerHandler<T = unknown>(
   type: string,
-  handler: AnyHandler,
+  handler: (message: TypedMessage<T>, sender: chrome.runtime.MessageSender) => unknown | Promise<unknown> | true,
 ): void {
   if (handlers.has(type)) {
     logger.warn(`[messaging] Handler for "${type}" already registered, overwriting`)
   }
-  handlers.set(type, handler)
+  handlers.set(type, handler as AnyHandler)
 }
 
 export function unregisterHandler(type: string): void {
@@ -29,7 +35,7 @@ function errorToResponse(e: unknown): { error: true; message: string; code: stri
 }
 
 export function messageDispatcher(
-  message: Record<string, unknown>,
+  message: TypedMessage,
   sender: chrome.runtime.MessageSender,
   sendResponse: (response: unknown) => void,
 ): boolean {
@@ -70,7 +76,7 @@ export function initMessageRouter(): void {
   chrome.runtime.onMessage.addListener(
     (message, sender, sendResponse) => {
       return messageDispatcher(
-        message as Record<string, unknown>,
+        message as TypedMessage,
         sender,
         sendResponse,
       )

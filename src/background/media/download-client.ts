@@ -14,6 +14,8 @@ import { logger } from '@/lib/logger'
 import { persistentStorage } from '@/lib/storage'
 import { DEFAULT_DOWNLOAD_CONFIG } from './types'
 import type { DownloadClientConfig } from './types'
+import type { MediaDescriptor } from '@/types'
+import { createPushClient } from '@/background/push-client'
 
 const DOWNLOAD_CONFIG_KEY = 'downloadClientConfig'
 
@@ -544,4 +546,88 @@ function sdownWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, file
   const payload = JSON.stringify(msg)
   logger.info('[download] sdown push_dash → video:', videoUrl.slice(0, 80), 'audio:', audioUrl.slice(0, 80), 'headers:', msg.headers ? Object.keys(msg.headers) : 'none')
   ws.send(payload)
+}
+
+/** PushClient 实例注入（供 background.ts 调用） */
+let pushClientInstance: ReturnType<typeof createPushClient> | null = null
+
+export function setPushClient(client: ReturnType<typeof createPushClient> | null): void {
+  pushClientInstance = client
+}
+
+/** 推送 HLS m3u8 到 sdown 桌面端 */
+export async function pushHls(
+  descriptor: MediaDescriptor,
+  m3u8Text: string,
+  options?: { mergeFormat?: string },
+): Promise<void> {
+  if (!pushClientInstance) {
+    throw new Error('Push client not initialized')
+  }
+  const msg = {
+    version: 1,
+    token: '',
+    action: 'push_m3u8' as const,
+    m3u8_text: m3u8Text,
+    url: undefined as string | undefined,
+    base_url: descriptor.url,
+    headers: undefined as Record<string, string> | undefined,
+    options: {
+      filename: undefined as string | undefined,
+      output_dir: undefined as string | undefined,
+      merge_format: options?.mergeFormat ?? 'ts',
+      extra_headers: undefined as Record<string, string> | undefined,
+    },
+  }
+  pushClientInstance.push(msg)
+}
+
+/** 推送 URL 到 sdown 桌面端 */
+export async function pushUrl(
+  url: string,
+  _descriptor: MediaDescriptor,
+  options?: { mergeFormat?: string },
+): Promise<void> {
+  if (!pushClientInstance) {
+    throw new Error('Push client not initialized')
+  }
+  const msg = {
+    version: 1,
+    token: '',
+    action: 'push_url' as const,
+    url,
+    m3u8_text: undefined as string | undefined,
+    base_url: undefined as string | undefined,
+    headers: undefined as Record<string, string> | undefined,
+    options: {
+      filename: undefined as string | undefined,
+      output_dir: undefined as string | undefined,
+      merge_format: options?.mergeFormat ?? 'ts',
+      extra_headers: undefined as Record<string, string> | undefined,
+    },
+  }
+  pushClientInstance.push(msg)
+}
+
+/** 推送普通媒体到 sdown 桌面端 */
+export async function pushNormal(descriptor: MediaDescriptor): Promise<void> {
+  if (!pushClientInstance) {
+    throw new Error('Push client not initialized')
+  }
+  const msg = {
+    version: 1,
+    token: '',
+    action: 'push_normal' as const,
+    url: descriptor.url,
+    m3u8_text: undefined as string | undefined,
+    base_url: undefined as string | undefined,
+    headers: undefined as Record<string, string> | undefined,
+    options: {
+      filename: undefined as string | undefined,
+      output_dir: undefined as string | undefined,
+      merge_format: 'ts',
+      extra_headers: undefined as Record<string, string> | undefined,
+    },
+  }
+  pushClientInstance.push(msg)
 }

@@ -83,3 +83,12 @@ export const configStore = {
     return persistentStorage.set('_sdownConfig', value)
   },
 }
+
+export const settingsStore = {
+  async get<T>(): Promise<T | undefined> {
+    return persistentStorage.get<T>('_adclearSettings')
+  },
+  async set<T>(value: T): Promise<void> {
+    return persistentStorage.set('_adclearSettings', value)
+  },
+}
