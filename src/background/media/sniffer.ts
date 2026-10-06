@@ -19,7 +19,6 @@ import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-f
 import { persistentStorage } from '@/lib/storage'
 import { settingsStore } from '@/lib/storage'
 import { DEFAULT_SETTINGS } from '@/types'
-import type { MediaDescriptor } from '@/types'
 
 /** NDM 的 B 正则：媒体扩展名（嗅探所有音视频，但 .ts 分片除外 — 太多无意义） */
 const MEDIA_EXT_RE = /^(?:FLV|SWF|MP3|MP4|M4V|F4F|F4V|M4A|M4S|MPG|MPEG|MPEG4|MPE|AVI|WMV|WMA|WAV|WAVE|ASF|RM|RAM|OGG|OGV|OGM|OGA|MOV|MID|MIDI|3GP|3GPP|QT|WEBM|MKV|AAC|RMVB|VTT|SRT|M3U8|M3U)$/i
@@ -58,6 +57,29 @@ interface PendingRequest {
 }
 
 const pendingRequests = new Map<string, PendingRequest>()
+
+type M3u8OutputHandler = (
+  result: unknown,
+  ctx: { m3u8Url: string; pageHost: string; tabId: number; sniffedHeaders?: Record<string, string> },
+) => Promise<void> | void
+
+let _m3u8OutputHandler: M3u8OutputHandler | null = null
+
+export function setM3u8OutputHandler(handler: M3u8OutputHandler | null): void {
+  _m3u8OutputHandler = handler
+}
+
+type M3u8ProcessHandler = (
+  m3u8Url: string,
+  tabId: number,
+  sniffedHeaders?: Record<string, string>,
+) => Promise<void>
+
+let _m3u8ProcessHandler: M3u8ProcessHandler | null = null
+
+export function setM3u8ProcessHandler(handler: M3u8ProcessHandler | null): void {
+  _m3u8ProcessHandler = handler
+}
 
 let initialized = false
 let onBeforeRequestListener: ((details: chrome.webRequest.OnBeforeRequestDetails) => undefined) | null = null
@@ -217,7 +239,11 @@ export function startSniffer(): void {
         logger.info('[sniffer] media detected:', item.ext, item.fileName, 'ct:', item.contentType, 'size:', item.size, 'tabId:', item.tabId, item.url.slice(0, 100))
 
         if ((ext.toLowerCase() === 'm3u8' || ext.toLowerCase() === 'm3u') && pending.tabId >= 0) {
-          void processM3u8InBackground(pending.url, pending.tabId, pending.requestHeaders)
+          if (_m3u8ProcessHandler) {
+            void _m3u8ProcessHandler(pending.url, pending.tabId, pending.requestHeaders)
+          } else {
+            void processM3u8InBackground(pending.url, pending.tabId, pending.requestHeaders)
+          }
         }
       } catch (e) {
         logger.warn('[sniffer] onHeadersReceived failed:', (e as Error).message)
@@ -403,7 +429,17 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
     const result = await processPlaylist(text, m3u8Url, m3u8Url, cfg)
     logger.info('[sniffer] step 4 done: mode:', result.mode, 'ads:', 'report' in result ? (result.report as { ads?: number })?.ads ?? 0 : 0)
 
-    // 5. 广播报告给 badge
+    // 5. 输出阶段 — 如果有注入的 handler，完全由 handler 接管；否则走默认流程
+    if (_m3u8OutputHandler) {
+      const ctx: { m3u8Url: string; pageHost: string; tabId: number; sniffedHeaders?: Record<string, string> } = { m3u8Url, pageHost, tabId }
+      if (sniffedHeaders) ctx.sniffedHeaders = sniffedHeaders
+      await _m3u8OutputHandler(result, ctx)
+      return
+    }
+
+    // --- 默认输出流程 ---
+
+    // 5a. 广播报告给 badge
     if (result.report) {
       try {
         await chrome.tabs.sendMessage(tabId, {
@@ -415,15 +451,20 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
       }
     }
 
-    // 6. 如果有 cleaned m3u8（检测到广告或可下载），广播给 badge 显示下载按钮 + AdSkipper
+    // 5b. 如果有 cleaned m3u8（检测到广告或可下载），广播给 badge 显示下载按钮 + AdSkipper
     if ('cleaned' in result && typeof result.cleaned === 'string') {
       const baseName = extractBaseName(m3u8Url)
       const adRanges = 'adRanges' in result ? result.adRanges : []
+      let pageTitle = ''
       try {
-        // 持久化 cleaned context（供 downloadCleanedM3u8 用）
+        const tab = await chrome.tabs.get(tabId)
+        pageTitle = tab?.title?.trim() || ''
+      } catch { /* ignore */ }
+      try {
         const ctx = {
           cleaned: result.cleaned,
           baseName,
+          pageTitle,
           report: result.report,
           segments: 'segments' in result ? result.segments : [],
           reasons: 'reasons' in result ? result.reasons : {},
@@ -436,14 +477,14 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
         all[String(tabId)] = ctx
         await persistentStorage.set(CLEANED_KEY, all)
 
-        // 广播（有广告时带 adRanges，无广告也广播让用户能下载清洗后的 m3u8）
         await chrome.tabs.sendMessage(tabId, {
           type: 'hlsFilterResult',
           adRanges: adRanges,
           baseName,
+          pageTitle,
           report: result.report,
         })
-        logger.info('[sniffer] hlsFilterResult broadcasted:', adRanges?.length ?? 0, 'ad ranges, baseName:', baseName)
+        logger.info('[sniffer] hlsFilterResult broadcasted:', adRanges?.length ?? 0, 'ad ranges, baseName:', baseName, 'pageTitle:', pageTitle ? pageTitle.slice(0, 40) : '(empty)')
       } catch (e) {
         logger.warn('[sniffer] broadcast hlsFilterResult failed:', (e as Error).message)
       }
@@ -454,12 +495,17 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
 }
 
 function extractBaseName(m3u8Url: string): string {
+  const BAD_SEG_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
   try {
-    const path = new URL(m3u8Url).pathname
-    const lastSlash = path.lastIndexOf('/')
-    const file = lastSlash >= 0 ? path.slice(lastSlash + 1) : path
-    const dot = file.lastIndexOf('.')
-    const name = dot > 0 ? file.slice(0, dot) : file
+    const u = new URL(m3u8Url)
+    const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+    let name = segs
+      .map((s) => s.replace(/\.[^.]+$/, ''))
+      .filter((s) => s.length >= 2 && !BAD_SEG_RE.test(s))
+      .join('_')
+    if (!name) name = u.hostname.replace(/^www\./, '')
+    name = name.replace(/[\\/:*?"<>|\s]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    if (name.length > 50) name = name.slice(-50)
     return name || 'video'
   } catch {
     return 'video'
@@ -537,24 +583,6 @@ function addMediaItem(tabId: number, item: MediaItem): void {
   list.push(item)
   if (list.length > MAX_PER_TAB) {
     list.splice(0, list.length - MAX_PER_TAB)
-  }
-
-  // 触发外部检测回调（供 background.ts registerWebRequestHandlers 使用）
-  if (_onDetectedCallback) {
-    const descriptor: MediaDescriptor = {
-      url: item.url,
-      pageUrl: '',
-      method: item.method,
-      ext: `.${item.ext}`,
-      mime: item.contentType,
-      contentLength: item.size,
-      contentType: item.contentType,
-      contentDisposition: item.contentDisposition,
-      headers: item.requestHeaders ?? {},
-    }
-    _onDetectedCallback(descriptor, item).catch((e) => {
-      logger.warn('[sniffer] onDetected callback failed:', (e as Error).message)
-    })
   }
 }
 
@@ -962,31 +990,3 @@ export function getDashPairs(tabId: number): DashPair[] {
   }
   return pairs
 }
-
-/** 判断 MediaDescriptor 是否为 m3u8 播放列表 */
-export function isM3u8(descriptor: { ext: string; contentType?: string; mime?: string }): boolean {
-  return descriptor.ext === '.m3u8'
-    || descriptor.ext === '.m3u'
-    || /mpegurl/i.test(descriptor.contentType ?? '')
-    || /mpegurl/i.test(descriptor.mime ?? '')
-}
-
-/** 注册 webRequest 拦截处理器（供 background.ts 调用） */
-export function registerWebRequestHandlers(
-  onDetected: (descriptor: MediaDescriptor, details: unknown) => Promise<void>,
-): void {
-  startSniffer()
-  _onDetectedCallback = onDetected
-}
-
-/** 获取指定 URL 的 Cookie 字符串 */
-export async function getCookieString(url: string): Promise<string> {
-  try {
-    const cookieList = await chrome.cookies.getAll({ url })
-    return cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
-  } catch {
-    return ''
-  }
-}
-
-let _onDetectedCallback: ((descriptor: MediaDescriptor, details: unknown) => Promise<void>) | null = null

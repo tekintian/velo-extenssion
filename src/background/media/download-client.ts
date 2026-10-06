@@ -369,7 +369,7 @@ export async function sendToSdownM3u8(
         clearTimeout(timeout)
         sdownWs = ws
         sdownWsReady = true
-        sdownWsSendM3u8(ws, m3u8Text, baseUrl, fileName, cfg.sdownToken)
+        sdownWsSendM3u8(ws, m3u8Text, baseUrl, fileName, cfg.sdownToken, extra)
         resolve({ success: true })
       }
       ws.onerror = () => {

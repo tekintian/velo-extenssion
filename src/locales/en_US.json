@@ -69,5 +69,11 @@
   },
   "options_save_filter": {
     "message": "Save"
+  },
+  "notify_disconnected_title": {
+    "message": "sdown is not running"
+  },
+  "notify_disconnected_body": {
+    "message": "Please start the sdown desktop app; the extension will reconnect automatically"
   }
 }

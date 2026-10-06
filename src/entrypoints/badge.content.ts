@@ -66,7 +66,7 @@ export default defineContentScript({
     // 监听 background 消息
     chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
       if (!message || typeof message !== 'object') return false
-      const msg = message as { type?: string; report?: unknown; adRanges?: unknown; baseName?: string }
+      const msg = message as { type?: string; report?: unknown; adRanges?: unknown; baseName?: string; pageTitle?: string }
       if (msg.type === 'hlsFilterReport') {
         handleReport(msg.report as { ads?: number; adDuration?: number; contentDuration?: number; appliedRule?: { name?: string } | null } | undefined)
       }
@@ -77,7 +77,8 @@ export default defineContentScript({
         }
         // 有 baseName 时显示下载按钮（即使无广告也显示，用户可下载清洗后的 m3u8）
         if (msg.baseName) {
-          showDownloadButton(msg.baseName, (msg.report as { ads?: number } | undefined)?.ads ?? 0)
+          const displayName = msg.pageTitle || msg.baseName
+          showDownloadButton(displayName, (msg.report as { ads?: number } | undefined)?.ads ?? 0)
         }
       }
       // 响应 popup 的播放状态查询（保存广告样本时需要 currentTime）
@@ -241,7 +242,7 @@ export default defineContentScript({
       }
     }
 
-    function showDownloadButton(baseName: string, adCount: number): void {
+    function showDownloadButton(displayName: string, adCount: number): void {
       try {
         let btn = document.getElementById(DL_BTN_ID) as HTMLDivElement | null
         if (!btn) {
@@ -280,7 +281,7 @@ export default defineContentScript({
           })
           ;(document.body ?? document.documentElement).appendChild(btn)
         }
-        btn.textContent = '📥 下载去广告 m3u8' + (adCount > 0 ? ` (${adCount} 广告已过滤)` : '') + '\n📁 ' + baseName + '_cleaned.m3u8'
+        btn.textContent = '📥 下载去广告 m3u8' + (adCount > 0 ? ` (${adCount} 广告已过滤)` : '') + '\n📁 ' + displayName + '_cleaned.m3u8'
         btn.style.whiteSpace = 'pre-line'
         btn.style.background = '#059669'
         btn.style.opacity = '1'

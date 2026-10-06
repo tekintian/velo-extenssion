@@ -9,6 +9,64 @@ interface PushQueueItem {
   addedAt: number
 }
 
+/**
+ * T9.1: 在扩展图标上标记连接状态。
+ * - 连接失败/断开 → 红色 '!' badge
+ * - 连接恢复 → 清除 badge
+ *
+ * 用 try/catch 包裹防止在 service worker 早期初始化阶段调用 chrome.action 失败。
+ */
+function setBadgeError(): void {
+  try {
+    void chrome.action.setBadgeBackgroundColor({ color: '#ef4444' })
+    void chrome.action.setBadgeText({ text: '!' })
+  } catch (e) {
+    logger.debug('setBadgeText 失败:', (e as Error).message)
+  }
+}
+
+function clearBadge(): void {
+  try {
+    void chrome.action.setBadgeText({ text: '' })
+  } catch (e) {
+    logger.debug('clearBadge 失败:', (e as Error).message)
+  }
+}
+
+/**
+ * T9.1: 用 chrome.notifications 显示桌面通知（toast）告知用户「sdown 未运行」。
+ * 仅在「断开 → 已通知」状态切换时触发一次，避免重连风暴刷屏。
+ */
+let disconnectNotified = false
+
+function notifyDisconnected(): void {
+  if (disconnectNotified) return
+  disconnectNotified = true
+  try {
+    const title = chrome.i18n.getMessage('notify_disconnected_title') || 'sdown 未运行'
+    const message = chrome.i18n.getMessage('notify_disconnected_body') || '请先启动 sdown 桌面端，扩展将自动重连'
+    void chrome.notifications.create('sdown-disconnected', {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+      title,
+      message,
+      priority: 2,
+    })
+  } catch (e) {
+    logger.debug('chrome.notifications 不可用:', (e as Error).message)
+  }
+}
+
+function clearDisconnectNotification(): void {
+  if (!disconnectNotified) return
+  disconnectNotified = false
+  try {
+    void chrome.notifications.clear('sdown-disconnected')
+  } catch (e) {
+    logger.debug('clearDisconnectNotification 失败:', (e as Error).message)
+  }
+}
+
 export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: number, token: string) {
   let ws: WebSocket | null = null
   let connected = false
@@ -29,6 +87,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       ws = new WebSocket(url, [SUB_PROTOCOL])
     } catch (e) {
       logger.error('WebSocket creation failed:', (e as Error).message)
+      setBadgeError()
+      notifyDisconnected()
       scheduleReconnect()
       return
     }
@@ -37,6 +97,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       logger.info('WebSocket connected')
       connected = true
       reconnectIndex = 0
+      clearBadge()
+      clearDisconnectNotification()
       void flushQueue()
     }
 
@@ -51,12 +113,16 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       logger.info('WebSocket closed')
       connected = false
       ws = null
+      // T9.1: 标记 badge + 通知用户（仅在断开→通知一次）
+      setBadgeError()
+      notifyDisconnected()
       scheduleReconnect()
     }
 
     ws.onerror = (event) => {
       logger.error('WebSocket error:', event.type)
       connected = false
+      // onclose 会随后触发并清理状态，这里不重复通知
     }
   }
 
@@ -73,6 +139,9 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       ws = null
     }
     connected = false
+    // 主动断开（如清除配对）不应保留 badge
+    clearBadge()
+    clearDisconnectNotification()
   }
 
   function scheduleReconnect(): void {

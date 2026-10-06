@@ -3,9 +3,9 @@ import { logger } from '@/lib/logger'
 import { initMessageRouter, registerHandler } from '@/background/messaging/router'
 import { PairingManager } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
-import { registerWebRequestHandlers, isM3u8, getMediaItems } from '@/background/media/sniffer'
+import { startSniffer, setM3u8ProcessHandler, getMediaItems } from '@/background/media/sniffer'
 import { setPushClient, pushHls, pushUrl, pushNormal } from '@/background/media/download-client'
-import { processPlaylist, buildConfig, DEFAULT_CONFIG } from '@/engine/hls/hls-filter'
+import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
 import { registerHlsHandlers } from '@/background/hls/handler'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type SdownConfig } from '@/types'
 import { configStore } from '@/lib/storage'
@@ -148,7 +148,8 @@ async function initBackground(): Promise<void> {
     setPushClient(pushClient)
   }
 
-  registerWebRequestHandlers(handleDetected)
+  startSniffer()
+  setM3u8ProcessHandler(sdownProcessM3u8)
 
   chrome.contextMenus.create({
     id: 'sdown-download-link',
@@ -165,36 +166,43 @@ async function initBackground(): Promise<void> {
   logger.info('Background async init done')
 }
 
-async function handleDetected(descriptor: MediaDescriptor, _details: unknown): Promise<void> {
-  logger.info('Detected media:', descriptor.ext, descriptor.url.slice(0, 80))
-
-  if (isM3u8(descriptor)) {
-    await handleHls(descriptor)
-  } else {
-    await pushNormal(descriptor)
-  }
-}
-
-async function handleHls(descriptor: MediaDescriptor): Promise<void> {
+async function sdownProcessM3u8(
+  m3u8Url: string,
+  _tabId: number,
+  sniffedHeaders?: Record<string, string>,
+): Promise<void> {
   try {
-    // fetch m3u8 时携带认证头
+    if (!config.enableFilter) {
+      logger.info('[sdown] filter disabled, skip m3u8 processing')
+      return
+    }
+
     const fetchHeaders: Record<string, string> = {}
     try {
-      const cookieList = await chrome.cookies.getAll({ url: descriptor.url })
+      const cookieList = await chrome.cookies.getAll({ url: m3u8Url })
       if (cookieList.length > 0) {
         fetchHeaders['Cookie'] = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
       }
     } catch { /* ignore */ }
+    if (sniffedHeaders) {
+      for (const [name, value] of Object.entries(sniffedHeaders)) {
+        fetchHeaders[name] = value
+      }
+    }
     const fetchInit: RequestInit = { cache: 'no-store' }
     if (Object.keys(fetchHeaders).length > 0) {
       fetchInit.headers = fetchHeaders
     }
-    const resp = await fetch(descriptor.url, fetchInit)
+    const resp = await fetch(m3u8Url, fetchInit)
+    if (!resp.ok) {
+      logger.warn('[sdown] fetch m3u8 failed:', resp.status)
+      return
+    }
     const text = await resp.text()
 
     let pageHost = ''
     try {
-      if (descriptor.pageUrl) pageHost = new URL(descriptor.pageUrl).host
+      pageHost = new URL(m3u8Url).host
     } catch { /* ignore */ }
 
     const cfg = await buildConfig(
@@ -206,7 +214,6 @@ async function handleHls(descriptor: MediaDescriptor): Promise<void> {
       pageHost,
     )
 
-    // 从嗅探器提取 requestHeaders 供指纹 fetch 认证
     let hlsAuthHeaders: Record<string, string> | undefined
     try {
       const items = getMediaItems(0)
@@ -216,7 +223,19 @@ async function handleHls(descriptor: MediaDescriptor): Promise<void> {
       }
     } catch { /* ignore */ }
 
-    const result = await processPlaylist(text, descriptor.url, descriptor.pageUrl, cfg, hlsAuthHeaders)
+    const result = await processPlaylist(text, m3u8Url, m3u8Url, cfg, hlsAuthHeaders)
+
+    const descriptor: MediaDescriptor = {
+      url: m3u8Url,
+      pageUrl: '',
+      method: 'GET',
+      ext: '.m3u8',
+      mime: 'application/vnd.apple.mpegurl',
+      contentLength: text.length,
+      contentType: 'application/vnd.apple.mpegurl',
+      contentDisposition: '',
+      headers: sniffedHeaders ?? {},
+    }
 
     if (result.mode === 'master') {
       const variants = ('variants' in result ? result.variants : []) as Array<{ url: string }>
@@ -236,11 +255,11 @@ async function handleHls(descriptor: MediaDescriptor): Promise<void> {
     if ('cleaned' in result && typeof result.cleaned === 'string') {
       if (config.autoPush) {
         await pushHls(descriptor, result.cleaned, { mergeFormat: config.mergeFormat })
-        logger.info('HLS push completed')
+        logger.info('[sdown] HLS push completed')
       }
     }
   } catch (e) {
-    logger.error('HLS processing failed:', (e as Error).message)
+    logger.error('[sdown] HLS processing failed:', (e as Error).message)
   }
 }
 

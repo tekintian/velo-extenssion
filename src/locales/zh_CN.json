@@ -69,5 +69,11 @@
   },
   "options_save_filter": {
     "message": "保存"
+  },
+  "notify_disconnected_title": {
+    "message": "sdown 未运行"
+  },
+  "notify_disconnected_body": {
+    "message": "请先启动 sdown 桌面端，扩展将自动重连"
   }
 }

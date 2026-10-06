@@ -36,6 +36,7 @@ import { getMediaItems } from '@/background/media/sniffer'
 export interface CleanedContext {
   readonly cleaned: string
   readonly baseName: string
+  readonly pageTitle?: string
   readonly report: { ads: number; total: number; adDuration: number; contentDuration: number; appliedRule?: { id: string; name: string } | null }
   readonly segments: ReadonlyArray<{ index: number; url: string; duration: number; discontinuity: boolean; seqNum: number | null; title: string; byterange: string | null; cueState: 'out' | null; scte35: string | null; dateRangeAd: string | null }>
   readonly reasons: Record<number, string[]>
@@ -144,9 +145,15 @@ export function registerHlsHandlers(): void {
         // 持久化 cleaned m3u8 + 广播 hlsFilterResult 给 player-panel
         if (_sender.tab?.id) {
           const baseName = extractBaseName(baseUrl)
+          let pageTitle = ''
+          try {
+            const tab = await chrome.tabs.get(_sender.tab.id)
+            pageTitle = tab?.title?.trim() || ''
+          } catch { /* ignore */ }
           const ctx: CleanedContext = {
             cleaned: result.cleaned,
             baseName,
+            pageTitle,
             report: result.report as CleanedContext['report'],
             segments: ('segments' in result ? result.segments : []) as CleanedContext['segments'],
             reasons: ('reasons' in result ? result.reasons : {}) as Record<number, string[]>,
@@ -163,9 +170,10 @@ export function registerHlsHandlers(): void {
               type: 'hlsFilterResult',
               adRanges,
               baseName,
+              pageTitle,
               report: result.report,
             })
-            logger.info('[hls] hlsFilterResult broadcasted to player-panel, baseName:', baseName)
+            logger.info('[hls] hlsFilterResult broadcasted to player-panel, baseName:', baseName, 'pageTitle:', pageTitle ? pageTitle.slice(0, 40) : '(empty)')
           } catch {
             // player-panel 未注入 — 忽略
           }
@@ -346,10 +354,17 @@ export function registerHlsHandlers(): void {
 
     try {
       const cfg = await getDownloadConfig()
-      const m3u8FileName = `${ctx.baseName}_cleaned.m3u8`
 
-      // 收集验证信息：pageUrl + cookies + requestHeaders（含 User-Agent）
-      const pageUrl = sender.tab?.url || ''
+      // 收集验证信息：主页面 URL + cookies + requestHeaders（含 User-Agent）
+      let rootTabUrl = ''
+      let rootTabTitle = ''
+      try {
+        const rootTab = await chrome.tabs.get(tabId)
+        rootTabUrl = rootTab?.url || ''
+        rootTabTitle = rootTab?.title || ''
+      } catch { /* ignore */ }
+      const pageUrl = rootTabUrl || sender.tab?.url || ''
+      const iframeUrl = sender.tab?.url || ''
       let cookies = ''
       try {
         const cookieList = await chrome.cookies.getAll({ url: ctx.baseUrl })
@@ -357,7 +372,6 @@ export function registerHlsHandlers(): void {
           cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
         }
       } catch { /* ignore */ }
-      // 从当前 tab 的嗅探媒体项中提取 requestHeaders（含 User-Agent 等认证头）
       let requestHeaders: Record<string, string> | undefined
       try {
         const items = getMediaItems(tabId)
@@ -368,7 +382,131 @@ export function registerHlsHandlers(): void {
       } catch { /* ignore */ }
       const downloadExtra = { pageUrl, cookies, requestHeaders }
 
-      const friendlyName = payloadFileName || ctx.baseName
+      const BAD_NAME_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|new\s*tab|无标题|untitled|unknown|test|demo|sample|example|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|tempfile|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove|[0-9]{4,6}|\/?[\s*_\-|·]+\/?)$/i
+      const isBadName = (s: string | undefined): boolean => {
+        if (!s) return true
+        const t = s.trim()
+        if (t.length < 3) return true
+        if (BAD_NAME_RE.test(t)) return true
+        if (/^[^a-z\u4e00-\u9fa5]*$/i.test(t)) return true
+        return false
+      }
+      const sanitize = (n: string): string =>
+        n.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/_{2,}/g, '_').trim().slice(0, 200)
+
+      const candidates: string[] = []
+      let debug = ''
+      debug += `[resolveName] payloadFileName=${JSON.stringify(payloadFileName)}, pageUrl=${pageUrl}, tabId=${tabId}\n`
+      debug += `  rootTabUrl=${JSON.stringify(rootTabUrl)}\n  iframeUrl=${JSON.stringify(iframeUrl)}\n  rootTabTitle=${JSON.stringify(rootTabTitle)}\n`
+
+      // ① Content Script 传来的文件名
+      if (payloadFileName && !isBadName(payloadFileName)) {
+        candidates.push(payloadFileName)
+        debug += `  ① payloadFileName OK: ${payloadFileName}\n`
+      } else {
+        debug += `  ① payloadFileName SKIP (bad/empty): ${JSON.stringify(payloadFileName)}\n`
+      }
+
+      // ② 主页面 title（优先 chrome.tabs.get，其次 ctx.pageTitle from sniffer 持久化）
+      const titleSource = rootTabTitle || ctx.pageTitle || ''
+      if (titleSource) {
+        let t = titleSource.trim()
+        t = t
+          .replace(/[-_]\s*哔哩哔哩_bilibili$/i, '')
+          .replace(/[-_]\s*bilibili$/i, '')
+          .replace(/[-_]\s*哔哩哔哩$/i, '')
+          .replace(/\s*[-–—]\s*YouTube$/i, '')
+          .replace(/\s*[-–—]\s*爱奇艺$/i, '')
+          .replace(/\s*[-_]\s*腾讯视频.*$/i, '')
+          .replace(/\s*[-_]\s*优酷.*$/i, '')
+          .replace(/\s*[-_]\s*西瓜视频.*$/i, '')
+          .replace(/\s*[-_]\s*抖音.*$/i, '')
+        t = sanitize(t)
+        if (!isBadName(t)) {
+          candidates.push(t)
+          debug += `  ② titleSource OK: ${t}\n`
+        } else {
+          debug += `  ② titleSource BAD: ${t}\n`
+        }
+      } else {
+        debug += `  ② titleSource empty (rootTabTitle=${JSON.stringify(rootTabTitle)}, ctx.pageTitle=${JSON.stringify(ctx.pageTitle)})\n`
+      }
+
+      // ③ fetch 主页面 HTML 提取 og:title / <title>
+      try {
+        let fetchUrl = ''
+        if (requestHeaders?.Referer) fetchUrl = requestHeaders.Referer
+        if (!fetchUrl && rootTabUrl) fetchUrl = rootTabUrl
+        if (!fetchUrl && iframeUrl) fetchUrl = iframeUrl
+        if (fetchUrl) {
+          debug += `  ③ trying fetch OG from: ${fetchUrl}\n`
+          const fetchHeaders: Record<string, string> = {}
+          if (requestHeaders?.['User-Agent']) fetchHeaders['User-Agent'] = requestHeaders['User-Agent']
+          if (requestHeaders?.['Cookie']) fetchHeaders['Cookie'] = requestHeaders['Cookie']
+          if (requestHeaders?.['Origin']) fetchHeaders['Origin'] = requestHeaders['Origin']
+          if (requestHeaders?.['Referer']) fetchHeaders['Referer'] = requestHeaders['Referer']
+          const resp = await fetch(fetchUrl, fetchHeaders ? { headers: fetchHeaders } : undefined)
+          if (resp.ok) {
+            const html = await resp.text()
+            const ogMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i)
+            const ogTitle = ogMatch ? ogMatch[1]?.trim() : ''
+            if (ogTitle) {
+              const cleanOg = sanitize(ogTitle)
+              if (!isBadName(cleanOg)) {
+                candidates.push(cleanOg)
+                debug += `  ③ OG meta OK: ${cleanOg}\n`
+              } else {
+                debug += `  ③ OG meta BAD: ${cleanOg}\n`
+              }
+            } else {
+              const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i)
+              const htmlTitle = titleMatch ? titleMatch[1]?.trim() : ''
+              if (htmlTitle) {
+                let t = htmlTitle
+                  .replace(/[-_]\s*哔哩哔哩_bilibili$/i, '')
+                  .replace(/\s*[-–—]\s*YouTube$/i, '')
+                  .replace(/\s*[-–—]\s*爱奇艺$/i, '')
+                  .replace(/\s*[-_]\s*腾讯视频.*$/i, '')
+                t = sanitize(t)
+                if (!isBadName(t)) {
+                  candidates.push(t)
+                  debug += `  ③ <title> tag OK: ${t}\n`
+                } else {
+                  debug += `  ③ <title> tag BAD: ${t}\n`
+                }
+              }
+            }
+          } else {
+            debug += `  ③ fetch failed: ${resp.status}\n`
+          }
+        }
+      } catch (e) {
+        debug += `  ③ fetch OG error: ${(e as Error).message}\n`
+      }
+
+      // ④ URL path 多段提取（剔除技术段）
+      let friendlyName = candidates[0] ?? ''
+      if (!friendlyName && pageUrl) {
+        try {
+          const BAD_SEG_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
+          const u = new URL(pageUrl)
+          const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+          let n = segs
+            .map((s) => s.replace(/\.[^.]+$/, ''))
+            .filter((s) => s.length >= 2 && !BAD_SEG_RE.test(s))
+            .join('_')
+          if (!n) n = u.hostname.replace(/^www\./, '')
+          friendlyName = n
+        } catch { /* ignore */ }
+      }
+      if (!friendlyName) friendlyName = ctx.baseName
+      debug += `  ⑤ baseName fallback: ${friendlyName}\n`
+      friendlyName = sanitize(friendlyName)
+      if (friendlyName.length > 50) friendlyName = friendlyName.slice(-50)
+      debug += `  → FINAL friendlyName: ${friendlyName}\n`
+      logger.info('[resolveName]', debug)
+
+      const m3u8OutName = `${friendlyName}_cleaned.m3u8`
 
       // 编码为 data URL 下载（不用 unescape，SW 环境可能无 unescape）
       const bytes = new TextEncoder().encode(ctx.cleaned)
@@ -381,7 +519,7 @@ export function registerHlsHandlers(): void {
         // aria2 模式：先存为本地文件，再用 aria2.addUri(file://) 让 Motrix 下载+合并 .ts
         return new Promise((resolve) => {
           chrome.downloads.download(
-            { url: m3u8DataUrl, filename: m3u8FileName, saveAs: false },
+            { url: m3u8DataUrl, filename: m3u8OutName, saveAs: false },
             (did) => {
               if (chrome.runtime.lastError || !did) {
                 resolve({ ok: false as const, error: '保存 m3u8 文件失败' })
@@ -424,22 +562,27 @@ export function registerHlsHandlers(): void {
       }
 
       // native 模式：浏览器原生下载
-      const r = await sendToNative(m3u8DataUrl, m3u8FileName)
-      return { ok: r.success as boolean, filename: m3u8FileName, ...(r.message ? { error: r.message } : {}) }
+      const r = await sendToNative(m3u8DataUrl, m3u8OutName)
+      return { ok: r.success as boolean, filename: m3u8OutName, ...(r.message ? { error: r.message } : {}) }
     } catch (e) {
       return { ok: false as const, error: (e as Error).message }
     }
   })
 }
 
-/** 从 m3u8 URL 提取 baseName（用于命名下载文件） */
+/** 从 m3u8 URL 提取 baseName（剔除技术段，拼接所有有意义路径段） */
 export function extractBaseName(m3u8Url: string): string {
+  const BAD_SEG_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
   try {
-    const path = new URL(m3u8Url).pathname
-    const lastSlash = path.lastIndexOf('/')
-    const file = lastSlash >= 0 ? path.slice(lastSlash + 1) : path
-    const dot = file.lastIndexOf('.')
-    const name = dot > 0 ? file.slice(0, dot) : file
+    const u = new URL(m3u8Url)
+    const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+    let name = segs
+      .map((s) => s.replace(/\.[^.]+$/, ''))
+      .filter((s) => s.length >= 2 && !BAD_SEG_RE.test(s))
+      .join('_')
+    if (!name) name = u.hostname.replace(/^www\./, '')
+    name = name.replace(/[\\/:*?"<>|\s]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    if (name.length > 50) name = name.slice(-50)
     return name || 'video'
   } catch {
     return 'video'

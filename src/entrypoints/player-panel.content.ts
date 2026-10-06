@@ -26,6 +26,7 @@ export default defineContentScript({
     let mediaItems: MediaItemDTO[] = []
     let hasAdFiltered = false
     let adFilterBaseName = ''
+    let adFilterPageTitle = ''
     let panel: HTMLDivElement | null = null
     let isExpanded = false
     let isHovering = false
@@ -82,13 +83,14 @@ export default defineContentScript({
     // 监听 SPA 路由变化 + HLS 过滤结果
     chrome.runtime.onMessage.addListener((message: unknown) => {
       if (!message || typeof message !== 'object') return false
-      const msg = message as { type?: string; baseName?: string; report?: { ads?: number }; url?: string }
+      const msg = message as { type?: string; baseName?: string; pageTitle?: string; report?: { ads?: number }; url?: string }
 
       // SPA 路由变化
       if (msg.type === 'pageUrlChanged') {
         mediaItems = []
         hasAdFiltered = false
         adFilterBaseName = ''
+        adFilterPageTitle = ''
         if (panel) {
           panel.remove()
           panel = null
@@ -101,6 +103,7 @@ export default defineContentScript({
       if (msg.type === 'hlsFilterResult' && msg.baseName) {
         hasAdFiltered = true
         adFilterBaseName = msg.baseName
+        if (msg.pageTitle) adFilterPageTitle = msg.pageTitle
         refreshMediaItems()
       }
       return false
@@ -229,10 +232,11 @@ export default defineContentScript({
           idx++
         }
         if (hasAdFiltered) {
-          const adLabel = adFilterBaseName ? `${adFilterBaseName} (ad-filtered)` : 'TS File (ad-filtered)'
+          const adLabel = adFilterPageTitle || adFilterBaseName || 'TS File'
+          const adSuffix = ' (ad-filtered)'
           html += `<div class="pp-row pp-ad" data-action="download-m3u8">
             <span class="pp-idx">${idx}</span>
-            <span class="pp-text">${escapeHtml(adLabel)}</span>
+            <span class="pp-text">${escapeHtml(adLabel + adSuffix)}</span>
           </div>`
         }
         html += '</div>'
@@ -278,7 +282,7 @@ export default defineContentScript({
           const action = (row as HTMLElement).dataset.action
           if (action === 'download-m3u8') {
             try {
-              const pageTitle = cleanPageTitle()
+              const pageTitle = adFilterPageTitle || cleanPageTitle()
               const r = (await chrome.runtime.sendMessage({
                 type: 'downloadCleanedM3u8',
                 payload: { tabId: currentTabId, fileName: pageTitle },
