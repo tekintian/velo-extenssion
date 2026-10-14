@@ -14,26 +14,77 @@
  */
 
 import { logger } from '@/lib/logger'
+import { extractBaseName } from '@/lib/naming'
 import type { MediaItem, DashPair, DashRole } from './types'
 import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
 import { persistentStorage } from '@/lib/storage'
 import { settingsStore } from '@/lib/storage'
 import { DEFAULT_SETTINGS } from '@/types'
+import {
+  isYouTubePlayerApiPost,
+  isVimeoPlayerJsonUrl,
+  isPeriscopeAccessUrl,
+  isGoogleVideoPlaybackUrl,
+  sniffYouTubeWatchPage,
+  sniffVimeoProgressiveJson,
+  sniffPeriscopeJson,
+  sniffGoogleVideoDash,
+} from './site-sniffers'
+import { extFromContentType, mimeFromExt } from './mime-table'
+import { isNonMediaDownloadExt } from './download-whitelist'
+import { parseRequestBody } from './post-body-parser'
+import { getDeleteKeyDown } from './delete-key-state'
 
 /** NDM 的 B 正则：媒体扩展名（嗅探所有音视频，但 .ts 分片除外 — 太多无意义） */
-const MEDIA_EXT_RE = /^(?:FLV|SWF|MP3|MP4|M4V|F4F|F4V|M4A|M4S|MPG|MPEG|MPEG4|MPE|AVI|WMV|WMA|WAV|WAVE|ASF|RM|RAM|OGG|OGV|OGM|OGA|MOV|MID|MIDI|3GP|3GPP|QT|WEBM|MKV|AAC|RMVB|VTT|SRT|M3U8|M3U)$/i
+const MEDIA_EXT_RE = /^(?:FLV|SWF|MP3|MP4|M4V|F4F|F4V|M4A|M4S|MPG|MPEG|MPEG4|MPE|AVI|WMV|WMA|WAV|WAVE|ASF|RM|RAM|OGG|OGV|OGM|OGA|MOV|MID|MIDI|3GP|3GPP|QT|WEBM|TS|MKV|AAC|MP2T|MPEGTS|RMVB|VTT|SRT|M3U8|M3U)$/i
 
 /** 非下载的页面资源扩展名 */
 const NON_DOWNLOAD_EXT_RE = /^(?:HTM|HTML|MHT|MHTML|SHTML|SHTM|XHT|XHTM|XHTML|XML|TXT|CSS|JS|JSON|GIF|ICO|JPEG|JPG|PNG|WEBP|BMP|SVG|TIF|TIFF|PDF|PHP|ASP|ASPX|EOT|TTF|WOF|WOFF|WOFF2|MSG|PEM|BR|OTF|ACZ|AZC|CGI|TPL|OSD|DO|DICT)$/i
 
-/** .ts 分片不嗅探（HLS 分片太多，单独下载无意义，应通过 m3u8 整体下载） */
-const TS_EXT = 'ts'
+/**
+ * NDM 的 da 正则：强制走 HLS 解析路径的扩展名
+ *
+ * NDM bg.js: `da=/^(?:F4F|MPEGTS|TS|MP2T)$/i`
+ *
+ * 这些扩展名虽然单独看是分片（.ts），但 NDM 视为 HLS 流的标志：
+ *   - F4F: Adobe Flash HTTP Dynamic Streaming 分片
+ *   - MPEGTS / TS: MPEG-2 Transport Stream，HLS 标准分片格式
+ *   - MP2T: video/mp2t MIME 对应扩展名
+ *
+ * NDM 在 onHeadersReceived 用 `da.test(b.i)` 判断是否为 HLS 流。
+ * velo-extension 旧实现只判断 'ts' 单一字符串，遗漏 F4F/MPEGTS/MP2T。
+ */
+const HLS_STREAMING_EXT_RE = /^(?:F4F|MPEGTS|TS|MP2T)$/i
 
-/** NDM 的 ba 正则：强制下载的 Content-Type */
-const FORCE_DOWNLOAD_CT_RE = /^(?:application\/x-apple-diskimage|application\/download|application\/force-download|application\/x-msdownload|binary\/octet-stream)$/i
+/**
+ * NDM 的 ba 数组：HTTP 重定向状态码（移植自 NDM bg.js `ba=[301,302,303,307,308]`）
+ *
+ * 这些状态码表示资源已重定向，应跳过嗅探（让浏览器跟随重定向到最终 URL 再嗅探）。
+ * 避免对中间重定向响应重复触发 addMediaItem 导致重复嗅探。
+ */
+const REDIRECT_STATUS_CODES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308])
 
 /** 跳过的 URL 文件名片段（manifest / favicon 等） */
 const SKIP_URL_FRAGMENTS = ['manif', 'favicon.ico', 'pem.msg', '.wasm', '.json', '.dict']
+
+/**
+ * webRequest URL 过滤器（移植自 NDM bg.js）
+ *
+ * NDM bg.js:
+ *   - onBeforeRequest: ['http', 'https', 'ftp'] all sub-paths
+ *   - onHeadersReceived: all_urls（但我们用显式列表，便于审阅）
+ *
+ * velo-extension 增加 file scheme 以嗅探本地文件（NDM 未做但 task 要求）。
+ */
+const URL_FILTERS = [
+  'http://*/*',
+  'https://*/*',
+  'ftp://*/*',
+  'file:///*',
+] as const
+
+/** 强制下载的 Content-Type（不通过扩展名也能识别为下载） */
+const FORCE_DOWNLOAD_CT_RE = /^(?:application\/x-apple-diskimage|application\/download|application\/force-download|application\/x-mveloload|binary\/octet-stream)$/i
 
 /** per-tab 媒体列表 */
 const tabMediaMap = new Map<number, MediaItem[]>()
@@ -52,22 +103,27 @@ interface PendingRequest {
   readonly frameId: number
   /** 请求发起时的页面代际号 */
   readonly generation: number
+  /** Delete 键是否按下（onBeforeSendHeaders 阶段快照，移植自 NDM bg.js `b.isKeyDown = B`） */
+  readonly isKeyDown: boolean
+  /** 协议（http/https/ftp），用于 FTP 单独路径（NDM bg.js W.N） */
+  readonly protocol: string
+  /**
+   * Chrome 原始 requestBody 对象（onBeforeRequest 阶段保存，onBeforeSendHeaders 阶段重解析）
+   *
+   * 因为 onBeforeSendHeaders 没有 requestBody 字段，但 formData 模式需要 Content-Type
+   * 才能正确解析（boundary / urlencoded 编码），所以保留原始对象供 onBeforeSendHeaders
+   * 在拿到 Content-Type 后重新调用 parseRequestBody。
+   */
+  readonly rawRequestBody?: { readonly error?: string; readonly formData?: { readonly [key: string]: readonly (string | ArrayBuffer)[] }; readonly raw?: readonly { readonly bytes?: ArrayBuffer }[] } | undefined
+  /** 请求体（完整解析 multipart/urlencoded，移植自 NDM bg.js `ia()` 函数） */
   readonly requestBody?: string | undefined
+  /** 请求体 MIME 类型（POST 时为 Content-Type，用于 multipart boundary 恢复） */
+  readonly requestBodyContentType?: string | undefined
+  /** 请求头（含 User-Agent / x-* / authorization / accept / accept-language） */
   readonly requestHeaders?: Record<string, string> | undefined
 }
 
 const pendingRequests = new Map<string, PendingRequest>()
-
-type M3u8OutputHandler = (
-  result: unknown,
-  ctx: { m3u8Url: string; pageHost: string; tabId: number; sniffedHeaders?: Record<string, string> },
-) => Promise<void> | void
-
-let _m3u8OutputHandler: M3u8OutputHandler | null = null
-
-export function setM3u8OutputHandler(handler: M3u8OutputHandler | null): void {
-  _m3u8OutputHandler = handler
-}
 
 type M3u8ProcessHandler = (
   m3u8Url: string,
@@ -82,29 +138,64 @@ export function setM3u8ProcessHandler(handler: M3u8ProcessHandler | null): void 
 }
 
 let initialized = false
-let onBeforeRequestListener: ((details: chrome.webRequest.OnBeforeRequestDetails) => undefined) | null = null
+let onBeforeRequestListener: ((details: chrome.webRequest.OnBeforeRequestDetails) => chrome.webRequest.BlockingResponse | undefined) | null = null
 let onBeforeSendHeadersListener: ((details: chrome.webRequest.OnBeforeSendHeadersDetails) => undefined) | null = null
-let onHeadersReceivedListener: ((details: chrome.webRequest.OnHeadersReceivedDetails) => undefined) | null = null
+let onHeadersReceivedListener: ((details: chrome.webRequest.OnHeadersReceivedDetails) => chrome.webRequest.BlockingResponse | undefined) | null = null
 
 export function startSniffer(): void {
   if (initialized) return
   initialized = true
 
-  onBeforeRequestListener = (details: chrome.webRequest.OnBeforeRequestDetails): undefined => {
+  onBeforeRequestListener = (details: chrome.webRequest.OnBeforeRequestDetails): chrome.webRequest.BlockingResponse | undefined => {
     if (details.tabId < 0 || details.frameId < 0) return undefined
-    if (!details.url || !/^https?:\/\//.test(details.url)) return undefined
+    if (!details.url) return undefined
+
+    const protocol = getProtocol(details.url)
+
+    // === FTP 协议嗅探（NDM bg.js W.N 行 266-271 100% 移植） ===
+    // NDM: if ("ftp" == R(a.url)) { if (K(a.url) && !B) { ...this.I(b); return {redirectUrl:"javascript:"} } }
+    //
+    // Chrome 已弃用原生 FTP，但扩展仍能拦截 ftp:// URL。我们把 FTP URL 当作
+    // 普通下载项推送到 tabMediaMap（task 要求：将 FTP URL 当作普通下载项推送）。
+    //   - 解析 URL 末段为 fileName（NDM K 函数：aa 正则提取 path 末段）
+    //   - 取扩展名匹配 NDM H 正则 或 非媒体下载白名单
+    //   - 命中即 addMediaItemExternal
+    //   - Delete 键按下：不推送（让浏览器尝试打开 FTP 目录）
+    //   - 不返回 redirectUrl（Chrome 不主动下载 FTP，无需取消）
+    if (protocol === 'ftp') {
+      if (getDeleteKeyDown()) return undefined
+      handleFtpOrFileRequest(details, 'ftp')
+      return undefined
+    }
+
+    // === file:// 本地文件嗅探（task 要求） ===
+    // 与 FTP 同理：从 URL 解析 fileName + ext，推送到 tabMediaMap。
+    // 不返回 redirectUrl（file:// 浏览器不会主动下载，只是页面加载）。
+    if (protocol === 'file') {
+      if (getDeleteKeyDown()) return undefined
+      handleFtpOrFileRequest(details, 'file')
+      return undefined
+    }
+
+    // === http/https 协议：记录 pending request ===
+    // NDM bg.js W.N else 分支：b=a.requestId; c=this.j[b]||{...}; "POST"==method && (c.ea=requestBody); c.isKeyDown=B
+    //
+    // 这里我们保存原始 requestBody 对象供 onBeforeSendHeaders 阶段重解析
+    // （formData 模式需要 Content-Type 才能正确解析 boundary / urlencoded 编码）
+    if (protocol !== 'http' && protocol !== 'https') return undefined
+
     let requestBody: string | undefined
-    if (details.method === 'POST' && details.requestBody) {
-      const raw = details.requestBody.raw
-      if (raw && raw.length > 0) {
-        try {
-          const dec = new TextDecoder()
-          requestBody = dec.decode(raw[0]!.bytes)
-        } catch {
-          // ignore
-        }
+    const rawRequestBody = details.requestBody
+    if (details.method === 'POST' && rawRequestBody) {
+      // 先尝试用 undefined CT 解析（仅 raw 模式有效；formData 模式需 onBeforeSendHeaders 拿到 CT 后再解析）
+      try {
+        const parsed = parseRequestBody(rawRequestBody, undefined)
+        if (parsed) requestBody = parsed
+      } catch {
+        // ignore parse error
       }
     }
+
     pendingRequests.set(details.requestId, {
       url: details.url,
       method: details.method,
@@ -112,22 +203,30 @@ export function startSniffer(): void {
       tabId: details.tabId,
       frameId: details.frameId,
       generation: tabGenerationMap.get(details.tabId) ?? 0,
+      isKeyDown: getDeleteKeyDown(),
+      protocol,
+      rawRequestBody,
       requestBody,
     })
     return undefined
   }
   chrome.webRequest.onBeforeRequest.addListener(
-    onBeforeRequestListener as (details: chrome.webRequest.OnBeforeRequestDetails) => undefined,
-    { urls: ['http://*/*', 'https://*/*'] },
+    onBeforeRequestListener as (details: chrome.webRequest.OnBeforeRequestDetails) => chrome.webRequest.BlockingResponse | undefined,
+    { urls: [...URL_FILTERS] },
     ['requestBody'],
   )
 
   // 记录请求头 — 收集 User-Agent + x-* 自定义头 + 关键认证头供下载客户端使用
   // 确保推送下载时携带完整页面认证信息，使"看见即可下载"
+  //
+  // NDM bg.js W.O（行 264）：同时把全局 Delete 键状态 B 快照到 per-request 的 isKeyDown 字段
+  // 这样请求中途 Delete 键状态变化不会影响该请求的拦截决策
+  // （在 onHeadersReceived 阶段读取 pending.isKeyDown 决定是否跳过）
   onBeforeSendHeadersListener = (details: chrome.webRequest.OnBeforeSendHeadersDetails): undefined => {
     const pending = pendingRequests.get(details.requestId)
     if (!pending) return undefined
     const authHeaders: Record<string, string> = {}
+    let requestContentType: string | undefined
     if (details.requestHeaders) {
       for (const h of details.requestHeaders) {
         const lower = h.name.toLowerCase()
@@ -140,20 +239,41 @@ export function startSniffer(): void {
         ) {
           authHeaders[h.name] = h.value ?? ''
         }
+        // 提取 POST body 的 Content-Type（NDM bg.js T() 函数从请求头取 Content-Type）
+        // 用于 multipart boundary 恢复
+        if (lower === 'content-type') {
+          requestContentType = h.value ?? undefined
+        }
       }
     }
-    if (Object.keys(authHeaders).length > 0) {
-      pendingRequests.set(details.requestId, { ...pending, requestHeaders: authHeaders })
+    const finalRequestBodyContentType = requestContentType ?? pending.requestBodyContentType
+    let finalRequestBody = pending.requestBody
+    // 如果 POST body 之前没解析成功（contentType 缺失），现在有 ContentType 时重新解析
+    // （多见于 formData 模式，需要 ContentType 提取 boundary）
+    if (details.method === 'POST' && !finalRequestBody && pending.rawRequestBody) {
+      try {
+        const reparsed = parseRequestBody(pending.rawRequestBody, finalRequestBodyContentType)
+        if (reparsed) finalRequestBody = reparsed
+      } catch {
+        // ignore
+      }
     }
+    pendingRequests.set(details.requestId, {
+      ...pending,
+      isKeyDown: getDeleteKeyDown(),
+      requestHeaders: Object.keys(authHeaders).length > 0 ? authHeaders : pending.requestHeaders,
+      requestBodyContentType: finalRequestBodyContentType,
+      requestBody: finalRequestBody ?? pending.requestBody,
+    })
     return undefined
   }
   chrome.webRequest.onBeforeSendHeaders.addListener(
     onBeforeSendHeadersListener as (details: chrome.webRequest.OnBeforeSendHeadersDetails) => undefined,
-    { urls: ['http://*/*', 'https://*/*'] },
+    { urls: [...URL_FILTERS] },
     ['requestHeaders'],
   )
 
-  onHeadersReceivedListener = (details: chrome.webRequest.OnHeadersReceivedDetails): undefined => {
+  onHeadersReceivedListener = (details: chrome.webRequest.OnHeadersReceivedDetails): chrome.webRequest.BlockingResponse | undefined => {
       const pending = pendingRequests.get(details.requestId)
       if (!pending) return undefined
 
@@ -165,6 +285,16 @@ export function startSniffer(): void {
 
       try {
         const status = parseInt(details.statusLine?.split(' ')[1] ?? '0', 10) || 0
+
+        // === NDM ba 重定向状态码跳过（301-308） ===
+        // NDM bg.js: `ba=[301,302,303,307,308]`，行 194: `b.ca = 0 <= ba.indexOf(a)`
+        // 命中重定向状态码时跳过唤探，避免对中间重定向响应重复触发 addMediaItem。
+        // 旧实现对 3xx 也会触发 addMediaItem，可能重复唤探同一资源（301 → 200 两次唤探）。
+        if (REDIRECT_STATUS_CODES.has(status)) {
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
         if (status !== 200 && status !== 206) {
           pendingRequests.delete(details.requestId)
           return undefined
@@ -186,7 +316,14 @@ export function startSniffer(): void {
         const fileNameFromCD = extractFilenameFromCD(contentDisposition)
         const urlPath = getUrlPath(details.url)
         const urlFileName = extractFileNameFromPath(urlPath)
-        const ext = (fileNameFromCD ? getExt(fileNameFromCD) : '') || getExt(urlFileName)
+
+        // === NDM bg.js b.L = I[u] 取 MIME 表首个扩展名 ===
+        // 从 Content-Type 反查扩展名（补足 URL/CD 无扩展名场景）
+        // 例：URL 无后缀但 CT=application/pdf → ext=pdf
+        const extFromCT = extFromContentType(contentType)
+
+        // 扩展名优先级：CD > URL > MIME 表反查
+        const ext = (fileNameFromCD ? getExt(fileNameFromCD) : '') || getExt(urlFileName) || extFromCT
 
         if (SKIP_URL_FRAGMENTS.some((f) => urlPath.toLowerCase().includes(f))) {
           pendingRequests.delete(details.requestId)
@@ -196,7 +333,7 @@ export function startSniffer(): void {
           pendingRequests.delete(details.requestId)
           return undefined
         }
-        if (ext && !MEDIA_EXT_RE.test(ext) && NON_DOWNLOAD_EXT_RE.test(ext)) {
+        if (ext && !MEDIA_EXT_RE.test(ext) && NON_DOWNLOAD_EXT_RE.test(ext) && !isNonMediaDownloadExt(ext)) {
           pendingRequests.delete(details.requestId)
           return undefined
         }
@@ -205,16 +342,74 @@ export function startSniffer(): void {
         const isVideoAudioCT = /^(?:video|audio)\//i.test(contentType) || /mpegurl/i.test(contentType) || /m3u8/i.test(contentType)
         const isForceDownloadCT = FORCE_DOWNLOAD_CT_RE.test(contentType)
         const isMediaExt = ext && MEDIA_EXT_RE.test(ext)
-        const isTsSegment = ext.toLowerCase() === TS_EXT
+        // === NDM da 正则：F4F/MPEGTS/TS/MP2T 视为 HLS 分片 ===
+        // 旧实现只判断 'ts' 单一字符串，遗漏 F4F/MPEGTS/MP2T。
+        const isHlsSegment = ext && HLS_STREAMING_EXT_RE.test(ext)
+        const isWhitelistExt = ext && isNonMediaDownloadExt(ext)
 
         const sniffable =
-          !isTsSegment &&
+          !isHlsSegment &&
           (isMediaExt ||
             isAttachment ||
             isForceDownloadCT ||
-            isVideoAudioCT)
+            isVideoAudioCT ||
+            isWhitelistExt)
 
         if (!sniffable) {
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        // === NDM bg.js b.isKeyDown 检查（行 219） ===
+        // Delete 键按下时跳过拦截，让浏览器原生下载（一次性绕过扩展）
+        // NDM: `if(b.isKeyDown){delete this.j[c]; return}`
+        if (pending.isKeyDown) {
+          logger.info('[sniffer] Delete key pressed, skip interception:', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        // === 站点特殊嗅探器（NDM bg.js 100% 移植） ===
+        // 这些 URL 模式由专门的嗅探器处理，不走常规媒体添加路径：
+        //   - GoogleVideo /videoplayback：去除 range 参数后作为 DASH 流配对
+        //   - YouTube player API POST：fetch watch 页提取 formats
+        //   - Vimeo player JSON：fetch JSON 提取 progressive URL
+        //   - Periscope JSON：fetch JSON 提取 hls_url
+        // 命中后立即返回，避免重复添加为常规媒体项
+        if (isGoogleVideoPlaybackUrl(pending.url, contentType)) {
+          // NDM bg.js W.P：重建无 range 参数的 URL，按 ei 配对视/音频
+          sniffGoogleVideoDash(pending.tabId, pending.url, contentType)
+          logger.info('[sniffer] GoogleVideo DASH dispatched:', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        if (isYouTubePlayerApiPost(pending.url, pending.method, pending.frameId) && pending.requestBody) {
+          // NDM bg.js：fetch watch 页提取 formats + adaptiveFormats
+          void sniffYouTubeWatchPage(pending.tabId, pending.requestBody).catch((e) => {
+            logger.warn('[sniffer] YouTube watch sniff failed:', (e as Error).message)
+          })
+          logger.info('[sniffer] YouTube watch page sniff dispatched:', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        if (isVimeoPlayerJsonUrl(pending.url, contentType)) {
+          // NDM bg.js：fetch player.vimeo.com JSON 提取 progressive URL
+          void sniffVimeoProgressiveJson(pending.tabId, pending.url).catch((e) => {
+            logger.warn('[sniffer] Vimeo sniff failed:', (e as Error).message)
+          })
+          logger.info('[sniffer] Vimeo progressive JSON sniff dispatched:', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        if (isPeriscopeAccessUrl(pending.url)) {
+          // NDM bg.js X json 模式：fetch JSON 提取 hls_url / https_hls_url
+          void sniffPeriscopeJson(pending.tabId, pending.url).catch((e) => {
+            logger.warn('[sniffer] Periscope sniff failed:', (e as Error).message)
+          })
+          logger.info('[sniffer] Periscope JSON sniff dispatched:', pending.url.slice(0, 80))
           pendingRequests.delete(details.requestId)
           return undefined
         }
@@ -245,6 +440,19 @@ export function startSniffer(): void {
             void processM3u8InBackground(pending.url, pending.tabId, pending.requestHeaders)
           }
         }
+
+        // === NDM bg.js 返回 {redirectUrl:"javascript:"} 取消浏览器原生下载 ===
+        // NDM 行 219-227: 非媒体下载白名单（ca）命中时，推送到下载客户端后返回 redirectUrl
+        //   使浏览器不创建下载条目（避免 chrome.downloads.onCreated 的闪现问题）
+        //   - 媒体扩展名（H 正则）：不返回 redirectUrl，让浏览器继续播放视频流
+        //   - 非媒体白名单（ca）：返回 redirectUrl，取消下载（用户明确要下载，不需浏览器下）
+        //   - m3u8: 不返回 redirectUrl（浏览器需读取 m3u8 内容以驱动 HLS 播放器）
+        //   - Attachment / 强制下载 CT：返回 redirectUrl（用户主动下载意图）
+        if (isWhitelistExt || isAttachment || isForceDownloadCT) {
+          logger.info('[sniffer] returning redirectUrl:"javascript:" to cancel browser download:', ext, pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return { redirectUrl: 'javascript:' }
+        }
       } catch (e) {
         logger.warn('[sniffer] onHeadersReceived failed:', (e as Error).message)
       } finally {
@@ -253,9 +461,9 @@ export function startSniffer(): void {
       return undefined
     }
   chrome.webRequest.onHeadersReceived.addListener(
-    onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => undefined,
-    { urls: ['http://*/*', 'https://*/*'] },
-    ['responseHeaders'],
+    onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => chrome.webRequest.BlockingResponse | undefined,
+    { urls: [...URL_FILTERS] },
+    ['responseHeaders', 'blocking'],
   )
 
   chrome.webRequest.onCompleted.addListener(
@@ -263,19 +471,28 @@ export function startSniffer(): void {
       pendingRequests.delete(details.requestId)
       return undefined
     }) as (details: chrome.webRequest.OnCompletedDetails) => undefined,
-    { urls: ['http://*/*', 'https://*/*'] },
+    { urls: [...URL_FILTERS] },
   )
   chrome.webRequest.onErrorOccurred.addListener(
     ((details: chrome.webRequest.OnErrorOccurredDetails): undefined => {
       pendingRequests.delete(details.requestId)
       return undefined
     }) as (details: chrome.webRequest.OnErrorOccurredDetails) => undefined,
-    { urls: ['http://*/*', 'https://*/*'] },
+    { urls: [...URL_FILTERS] },
   )
 
-  chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.tabs.onRemoved.addListener(async (tabId) => {
     tabMediaMap.delete(tabId)
     tabGenerationMap.delete(tabId)
+    // P1-6: 同步清理 hlsLastCleaned 中该 tab 的缓存，避免长期累积膨胀
+    try {
+      const CLEANED_KEY = 'hlsLastCleaned'
+      const all = (await persistentStorage.get<Record<string, unknown>>(CLEANED_KEY)) ?? {}
+      if (String(tabId) in all) {
+        delete all[String(tabId)]
+        await persistentStorage.set(CLEANED_KEY, all)
+      }
+    } catch { /* ignore */ }
   })
 
   // webNavigation.onHistoryStateUpdated — SPA 路由变化时清理旧媒体项、递增代际号并通知 player-panel 刷新
@@ -304,11 +521,29 @@ export function startSniffer(): void {
     }
   })
 
-  // action.onClicked — 工具栏开关嗅探 (移植自 NDM bg.js V.M)
-  chrome.action.onClicked.addListener((tab) => {
-    // 只在没有 popup 时才用 action.onClicked（有 popup 时点击打开 popup）
-    // 这里不实现，因为我们有 popup
-    void tab
+  // action.onClicked — 工具栏开关嗅探 (移植自 NDM bg.js V.M + task #8)
+  // NDM 行为：点击图标 → 切换 badge 显隐 → 广播给当前 tab 所有 content script
+  // velo-extension 有 popup 时此 listener 不触发；移除 popup 后才生效
+  // 为兼容两种情况，同时提供：
+  //   1. 此 listener（用户未配置 popup 时生效）
+  //   2. popup 中 "切换显隐" 按钮通过 velo-toggle-visibility handler 调用相同逻辑
+  chrome.action.onClicked.addListener(async (tab) => {
+    if (!tab.id || tab.id < 0) return
+    // 读取当前显隐状态（从 storage.local 读 ShowMediaPanel，与 NDM 一致）
+    const stored = await chrome.storage.local.get(['ShowMediaPanel'])
+    const currentVisible = stored.ShowMediaPanel !== -1
+    const newVisible = !currentVisible
+    await chrome.storage.local.set({ ShowMediaPanel: newVisible ? 1 : -1 })
+    // 广播给当前 tab 所有 frames（task #8: 折叠/展开所有 badge）
+    try {
+      await chrome.tabs.sendMessage(tab.id, {
+        type: 'veloVisibilityChanged',
+        payload: { visible: newVisible },
+      })
+    } catch {
+      // content script 未注入 — 忽略
+    }
+    logger.info('[sniffer] toolbar icon clicked, visibility toggled to:', newVisible, 'tabId:', tab.id)
   })
 
   // storage.onChanged — 配置变化实时响应 (移植自 NDM bg.js)
@@ -327,7 +562,7 @@ export function stopSniffer(): void {
 
   if (onBeforeRequestListener) {
     chrome.webRequest.onBeforeRequest.removeListener(
-      onBeforeRequestListener as (details: chrome.webRequest.OnBeforeRequestDetails) => undefined,
+      onBeforeRequestListener as (details: chrome.webRequest.OnBeforeRequestDetails) => chrome.webRequest.BlockingResponse | undefined,
     )
     onBeforeRequestListener = null
   }
@@ -339,7 +574,7 @@ export function stopSniffer(): void {
   }
   if (onHeadersReceivedListener) {
     chrome.webRequest.onHeadersReceived.removeListener(
-      onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => undefined,
+      onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => chrome.webRequest.BlockingResponse | undefined,
     )
     onHeadersReceivedListener = null
   }
@@ -416,7 +651,7 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
         autoLearnFingerprints: (fpCfg.autoLearnFingerprints as boolean) ?? true,
         remoteFingerprintsUrl: (fpCfg.remoteFingerprintsUrl as string) ?? '',
         scoreThreshold: (fpCfg.scoreThreshold as number) ?? 3,
-        mode: ((fpCfg.mode as string) ?? 'm3u8-file') as 'data-url' | 'enumerate' | 'passthrough' | 'm3u8-file' | 'disabled',
+        mode: ((fpCfg.mode as string) ?? 'm3u8-file') as 'data-url' | 'passthrough' | 'm3u8-file' | 'disabled',
         urlPatterns: (fpCfg.urlPatterns as string[]) ?? [],
         keepDiscontinuityOnGap: (fpCfg.keepDiscontinuityOnGap as boolean) ?? true,
       },
@@ -429,13 +664,8 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
     const result = await processPlaylist(text, m3u8Url, m3u8Url, cfg)
     logger.info('[sniffer] step 4 done: mode:', result.mode, 'ads:', 'report' in result ? (result.report as { ads?: number })?.ads ?? 0 : 0)
 
-    // 5. 输出阶段 — 如果有注入的 handler，完全由 handler 接管；否则走默认流程
-    if (_m3u8OutputHandler) {
-      const ctx: { m3u8Url: string; pageHost: string; tabId: number; sniffedHeaders?: Record<string, string> } = { m3u8Url, pageHost, tabId }
-      if (sniffedHeaders) ctx.sniffedHeaders = sniffedHeaders
-      await _m3u8OutputHandler(result, ctx)
-      return
-    }
+    // 5. 输出阶段 — 由 _m3u8ProcessHandler 接管（background.ts 注入的 veloProcessM3u8）
+    // 注：原 _m3u8OutputHandler 分支已删除（setM3u8OutputHandler 从未被调用，始终为 null）
 
     // --- 默认输出流程 ---
 
@@ -494,24 +724,6 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
   }
 }
 
-function extractBaseName(m3u8Url: string): string {
-  const BAD_SEG_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
-  try {
-    const u = new URL(m3u8Url)
-    const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
-    let name = segs
-      .map((s) => s.replace(/\.[^.]+$/, ''))
-      .filter((s) => s.length >= 2 && !BAD_SEG_RE.test(s))
-      .join('_')
-    if (!name) name = u.hostname.replace(/^www\./, '')
-    name = name.replace(/[\\/:*?"<>|\s]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-    if (name.length > 50) name = name.slice(-50)
-    return name || 'video'
-  } catch {
-    return 'video'
-  }
-}
-
 export function getMediaItems(tabId: number): MediaItem[] {
   return tabMediaMap.get(tabId) ?? []
 }
@@ -521,21 +733,55 @@ export function clearMediaItems(tabId: number): void {
 }
 
 /**
- * 外部添加媒体项（站点特殊抓取 content script 调用）
+ * 外部添加媒体项的可选元数据
+ *
+ * 用于站点特殊嗅探器（YouTube DASH / GoogleVideo DASH）标记音视频角色，
+ * 使 player-panel 能正确显示"合并下载 (V+A)"按钮。
  */
-export function addMediaItemExternal(tabId: number, url: string, label: string, ext: string): void {
+export interface AddMediaItemOptions {
+  /** DASH 音视频角色（video/audio），设置后会被 player-panel 当作 DASH 配对项 */
+  readonly dashRole?: DashRole | undefined
+  /** DASH 配对组 ID，同一视频的视/音频共享同一 groupId */
+  readonly dashGroupId?: string | undefined
+  /** Content-Type（可选，用于下载客户端的认证头构建） */
+  readonly contentType?: string | undefined
+  /** 文件大小（可选） */
+  readonly size?: number | undefined
+}
+
+/**
+ * 外部添加媒体项（站点特殊抓取 content script 调用）
+ *
+ * 用于 NDM bg.js + ct.js 移植的站点嗅探器（YouTube / Vimeo / Facebook / Periscope /
+ * GoogleVideo DASH）将解析出的媒体项推送到 tab 媒体列表。
+ *
+ * 与 webRequest 路径的 `addMediaItem` 区别：
+ *   - 无 Content-Disposition / Content-Length 等响应头信息
+ *   - 可携带 dashRole + dashGroupId 标记 DASH 配对关系（YouTube / GoogleVideo DASH）
+ *
+ * 去重策略：精确 URL 匹配（与 addMediaItem 一致），同一 URL 不重复添加。
+ */
+export function addMediaItemExternal(
+  tabId: number,
+  url: string,
+  label: string,
+  ext: string,
+  options?: AddMediaItemOptions,
+): void {
   const item: MediaItem = {
     id: `external-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     url,
     method: 'GET',
     resourceType: 'external',
-    contentType: '',
+    contentType: options?.contentType ?? '',
     contentDisposition: '',
-    size: 0,
+    size: options?.size ?? 0,
     fileName: label,
     ext: ext.toLowerCase(),
     tabId,
     detectedAt: Date.now(),
+    dashRole: options?.dashRole,
+    dashGroupId: options?.dashGroupId,
   }
   let list = tabMediaMap.get(tabId)
   if (!list) {
@@ -592,6 +838,95 @@ function getHeader(headers: chrome.webRequest.HttpHeader[], name: string): strin
     if (h.name.toLowerCase() === lower) return h.value
   }
   return undefined
+}
+
+/**
+ * 提取 URL 协议（小写，无 `:`）
+ *
+ * 移植自 NDM bg.js `R(a)` 函数：
+ * ```js
+ * function R(a) {
+ *   return Q(a, "://") ? a.split("://", 1).shift().toLowerCase() || "" : "http"
+ * }
+ * ```
+ *
+ * NDM 行 22: 默认返回 "http"（兼容无协议前缀的相对 URL）
+ * 我们用 URL 构造器解析，失败时回退到字符串 split（兼容 NDM 的 split("://") 行为）
+ *
+ * @param url 完整 URL
+ * @returns 协议名（小写，如 'http'/'https'/'ftp'/'file'），失败返回 'http'
+ */
+function getProtocol(url: string): string {
+  if (!url) return 'http'
+  // 优先用 URL 解析（更严格，处理标准 URL）
+  try {
+    return new URL(url).protocol.replace(':', '').toLowerCase() || 'http'
+  } catch {
+    // 回退到 NDM 的 split("://") 方式（兼容非标准 URL）
+    const idx = url.indexOf('://')
+    if (idx > 0) {
+      const proto = url.substring(0, idx).toLowerCase()
+      return proto || 'http'
+    }
+    return 'http'
+  }
+}
+
+/**
+ * 处理 FTP / file:// 请求（在 onBeforeRequest 阶段直接推送，不走 onHeadersReceived）
+ *
+ * NDM bg.js W.N（行 266-271）FTP 分支：
+ *   - 从 URL 提取 fileName（K 函数 = aa 正则提取 path 末段）
+ *   - 创建下载描述符 + 推送到 NDM
+ *   - 返回 {redirectUrl:"javascript:"} 取消浏览器请求
+ *
+ * velo-extension 实现（task 要求"将 FTP URL 当作普通下载项推送"）：
+ *   - 提取 fileName + ext
+ *   - 若 ext 在媒体扩展名 OR 非媒体下载白名单 → addMediaItemExternal 推送到 tabMediaMap
+ *   - 不返回 redirectUrl（Chrome 不会原生下载 FTP/file://，无需取消）
+ *
+ * @param details onBeforeRequest 事件详情
+ * @param protocol 协议名（'ftp' 或 'file'）
+ */
+function handleFtpOrFileRequest(
+  details: chrome.webRequest.OnBeforeRequestDetails,
+  protocol: 'ftp' | 'file',
+): void {
+  try {
+    const urlPath = getUrlPath(details.url)
+    const fileName = extractFileNameFromPath(urlPath)
+    const ext = getExt(fileName)
+
+    // 无扩展名的 URL（如 FTP 目录）不推送
+    if (!ext) {
+      logger.debug('[sniffer]', protocol, 'URL has no ext, skip:', details.url.slice(0, 100))
+      return
+    }
+
+    // 仅推送媒体扩展名 或 非媒体下载白名单扩展名
+    if (!MEDIA_EXT_RE.test(ext) && !isNonMediaDownloadExt(ext)) {
+      logger.debug('[sniffer]', protocol, 'URL ext not in whitelist, skip:', ext)
+      return
+    }
+
+    // 若有 MIME 反查（如 .pdf → application/pdf），添加到 contentType
+    const contentType = mimeFromExt(ext)
+    const tabId = details.tabId
+
+    addMediaItemExternal(tabId, details.url, fileName, ext.toLowerCase(), {
+      contentType: contentType || undefined,
+    })
+
+    logger.info(
+      '[sniffer]', protocol, 'URL added as media item:',
+      'ext:', ext,
+      'fileName:', fileName,
+      'tabId:', tabId,
+      'url:', details.url.slice(0, 100),
+    )
+  } catch (e) {
+    logger.warn('[sniffer] handleFtpOrFileRequest failed:', (e as Error).message)
+  }
 }
 
 function extractFilenameFromCD(cd: string): string {
@@ -714,19 +1049,46 @@ function isDashCandidate(item: MediaItem): boolean {
 /**
  * 对指定 tab 的媒体列表执行 DASH 音视频配对
  *
- * 配对算法:
- *   1. 筛选 DASH 候选项：contentType 为 video/* 或 audio/* 或 m4s+octet-stream
- *   2. 对候选项分类：基于 CT+URL关键字 判断 video/audio 角色
- *   3. 无法通过 CT/URL 区分角色时，按大小启发式：大文件→video，小文件→audio
- *   4. 在同组内按 URL 路径前缀相似度 + 时间窗口配对
- *   5. 标记 dashRole + dashGroupId
+ * DASH 流（B 站/YouTube 等）将音视频分轨传输：一个视频文件 + 一个音频文件，
+ * 下载后需 FFmpeg 合并。本函数从同 tab 嗅探到的媒体项中找出配对的 video+audio。
  *
- * @returns 配对组列表
+ * ┌─ 三级回退配对策略（按可靠性递降） ────────────────────────────────────────┐
+ * │                                                                          │
+ * │ ① 1v1 直配（行 786-802）                                                │
+ * │    同 tab 只有 1 个 video + 1 个 audio → 直接配对                       │
+ * │    最快路径，覆盖简单场景                                                │
+ * │                                                                          │
+ * │ ② 文件名前缀配对（行 804-847，策略 1）                                   │
+ * │    B 站 DASH 文件名格式：{cid}-{quality}-{size}.m4s                     │
+ * │    取最后一个 `-` 之前的部分作前缀，前缀相同 → 同一视频的音视频          │
+ * │    最可靠，覆盖 B 站等大站                                              │
+ * │                                                                          │
+ * │ ③ URL 路径前缀相似度 + 时间窗口（行 849-896，策略 2）                    │
+ * │    取 URL path 前 N 段（DASH_PREFIX_SEGMENTS=3），逐段比较相似度        │
+ * │    相似度阈值：候选 ≤4 时 0.1（宽松），>4 时 0.3（严格，避免误并轨）     │
+ * │    时间窗口 DASH_PAIR_WINDOW_MS=30s 内才配对                             │
+ * │    覆盖 YouTube 等无文件名规律但 URL 路径相似的站点                      │
+ * │                                                                          │
+ * │ ④ 时间窗口最近邻兜底（行 898-929）                                       │
+ * │    前三种都失败时，在 30s 窗口内找时间最近的 video+audio 配对            │
+ * │    最后防线，可能误配但优于完全不配对                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * 配对后会在 MediaItem 上标记 dashRole + dashGroupId，player-panel 据此显示
+ * "合并下载 (V+A)" 按钮。
+ *
+ * 候选项分类规则（行 739-773）：
+ *   - isDashCandidate：CT 为 video/audio/* 或扩展名 m4s
+ *   - isDashVideoCT / isDashAudioCT：按 CT + URL 关键字（playvideo/playaudio）区分角色
+ *   - 无法区分时按大小启发式：最大文件 → video，其余 → audio
+ *
+ * @returns 配对组列表（每组含一个 video MediaItem + 一个 audio MediaItem）
  */
 export function pairDashItems(tabId: number): DashPair[] {
   const items = tabMediaMap.get(tabId)
   if (!items || items.length === 0) return []
 
+  // ── 阶段 1：筛选 DASH 候选项（已配对的跳过） ──────────────────────────
   const candidates = items.filter((item) => {
     if (item.dashGroupId) return false
     return isDashCandidate(item)
@@ -740,6 +1102,7 @@ export function pairDashItems(tabId: number): DashPair[] {
   logger.info('[sniffer] DASH pair: candidates:', candidates.length, 'tabId:', tabId,
     candidates.map((c) => ({ ext: c.ext, ct: c.contentType, size: c.size, url: c.url.slice(0, 60) })))
 
+  // ── 阶段 2：按 CT/URL 关键字分类 video/audio，未分类项按大小启发式归类 ──
   const videoItemsBase = candidates.filter((item) => isDashVideoCT(item.contentType, item.ext, item.url))
   const audioItemsBase = candidates.filter((item) => isDashAudioCT(item.contentType, item.ext, item.url))
 
@@ -773,7 +1136,7 @@ export function pairDashItems(tabId: number): DashPair[] {
   const matchedAudioIds = new Set<string>()
   let pairCounter = 0
 
-  // 简单情况：同 tab 内只有 1 个 video + 1 个 audio → 直接配对
+  // ── 策略 ①：1v1 直配（同 tab 只有 1 个 video + 1 个 audio） ─────────
   if (videoItems.length === 1 && audioItems.length === 1) {
     const video = videoItems[0]!
     const audio = audioItems[0]!
@@ -792,7 +1155,8 @@ export function pairDashItems(tabId: number): DashPair[] {
     return pairs
   }
 
-  // 策略1: 文件名前缀配对（最可靠，B站: {cid}-{quality}- 前缀相同 → 同一视频）
+  // ── 策略 ②：文件名前缀配对（B 站 {cid}-{quality}- 格式） ───────────
+  //   取文件名最后一个 `-` 之前的部分作前缀，前缀相同视为同一视频的音视频
   const videoByPrefix = new Map<string, MediaItem[]>()
   const audioByPrefix = new Map<string, MediaItem[]>()
   for (const v of videoItems) {
@@ -837,7 +1201,9 @@ export function pairDashItems(tabId: number): DashPair[] {
     logger.info('[sniffer] DASH pair: filename-prefix matched:', pairs.length, 'tabId:', tabId)
   }
 
-  // 策略2: URL 路径前缀相似度配对（对未配对的候选项）
+  // ── 策略 ③：URL 路径前缀相似度 + 时间窗口配对（对未配对的候选项） ───
+  //   取 URL path 前 N-3 段作前缀，逐段比较相似度
+  //   阈值：候选 ≤4 时 0.1（宽松），>4 时 0.3（严格，避免误并轨）
   for (const video of videoItems) {
     if (matchedVideoIds.has(video.id)) continue
 
@@ -886,7 +1252,8 @@ export function pairDashItems(tabId: number): DashPair[] {
     }
   }
 
-  // 如果 URL 前缀配对失败，尝试按时间窗口内最近的 video+audio 配对
+  // ── 策略 ④：时间窗口最近邻兜底（前三种都失败时） ─────────────────
+  //   在 30s 窗口内找时间最近的 video+audio 配对，可能误配但优于完全不配对
   if (pairs.length === 0 && videoItems.length > 0 && audioItems.length > 0) {
     logger.info('[sniffer] DASH pair: URL prefix matching failed, trying time-based fallback')
     for (const video of videoItems) {

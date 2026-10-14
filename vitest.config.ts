@@ -2,6 +2,10 @@ import { defineConfig } from 'vitest/config'
 import path from 'node:path'
 
 export default defineConfig({
+  css: {
+    // 禁用 PostCSS 解析，避免继承父项目 postcss.config.mjs 导致测试启动失败
+    postcss: { plugins: [] },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

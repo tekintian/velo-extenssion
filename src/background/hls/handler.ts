@@ -12,13 +12,13 @@
  *     - mode='master'          master 列表，content script 原样放行（递归处理 variants）
  *     - mode='no-ads'          无广告，原样放行
  *     - mode='passthrough'     调试模式，原样放行（但返回 reasons/adRanges 供 UI）
- *     - mode='enumerate'       返回内容分片列表，content script 可逐个下载
  *     - mode='m3u8-file'        返回 cleaned m3u8 文本，content script 可下载
  *     - mode='data-url'        返回 data: URL，content script 可直接播放
  */
 
 import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
+import { extractBaseName, isBadName } from '@/lib/naming'
 import { persistentStorage, settingsStore } from '@/lib/storage'
 import type { BackupPayload } from '@/engine/hls/io'
 import { DEFAULT_SETTINGS } from '@/types'
@@ -29,7 +29,7 @@ import { captureSample, recordSample, autoLearnFromSample, listSamples, removeSa
 import { buildExport, applyImport } from '@/engine/hls/io'
 import { getLearnedCount, clearLearned } from '@/engine/hls/fingerprint'
 import { refreshRemoteRules } from '@/engine/hls/hls-rules'
-import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToSdownM3u8 } from '@/background/media/download-client'
+import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToVeloM3u8, materializeDataUrl } from '@/background/media/download-client'
 import { getMediaItems } from '@/background/media/sniffer'
 
 /** per-tab 最近清洗后的 m3u8 上下文（供下载按钮用） */
@@ -382,15 +382,6 @@ export function registerHlsHandlers(): void {
       } catch { /* ignore */ }
       const downloadExtra = { pageUrl, cookies, requestHeaders }
 
-      const BAD_NAME_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|new\s*tab|无标题|untitled|unknown|test|demo|sample|example|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|tempfile|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove|[0-9]{4,6}|\/?[\s*_\-|·]+\/?)$/i
-      const isBadName = (s: string | undefined): boolean => {
-        if (!s) return true
-        const t = s.trim()
-        if (t.length < 3) return true
-        if (BAD_NAME_RE.test(t)) return true
-        if (/^[^a-z\u4e00-\u9fa5]*$/i.test(t)) return true
-        return false
-      }
       const sanitize = (n: string): string =>
         n.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/_{2,}/g, '_').trim().slice(0, 200)
 
@@ -484,20 +475,10 @@ export function registerHlsHandlers(): void {
         debug += `  ③ fetch OG error: ${(e as Error).message}\n`
       }
 
-      // ④ URL path 多段提取（剔除技术段）
+      // ④ URL path 多段提取（剔除技术段）— 复用 lib/naming.ts 的 extractBaseName
       let friendlyName = candidates[0] ?? ''
       if (!friendlyName && pageUrl) {
-        try {
-          const BAD_SEG_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
-          const u = new URL(pageUrl)
-          const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
-          let n = segs
-            .map((s) => s.replace(/\.[^.]+$/, ''))
-            .filter((s) => s.length >= 2 && !BAD_SEG_RE.test(s))
-            .join('_')
-          if (!n) n = u.hostname.replace(/^www\./, '')
-          friendlyName = n
-        } catch { /* ignore */ }
+        friendlyName = extractBaseName(pageUrl)
       }
       if (!friendlyName) friendlyName = ctx.baseName
       debug += `  ⑤ baseName fallback: ${friendlyName}\n`
@@ -516,35 +497,14 @@ export function registerHlsHandlers(): void {
       const m3u8DataUrl = `data:application/vnd.apple.mpegurl;base64,${b64}`
 
       if (cfg.client === 'aria2') {
-        // aria2 模式：先存为本地文件，再用 aria2.addUri(file://) 让 Motrix 下载+合并 .ts
-        return new Promise((resolve) => {
-          chrome.downloads.download(
-            { url: m3u8DataUrl, filename: m3u8OutName, saveAs: false },
-            (did) => {
-              if (chrome.runtime.lastError || !did) {
-                resolve({ ok: false as const, error: '保存 m3u8 文件失败' })
-                return
-              }
-              const listener = (delta: chrome.downloads.DownloadDelta) => {
-                if (delta.id !== did) return
-                if (delta.state && delta.state.current === 'complete') {
-                  chrome.downloads.search({ id: did }, async (items) => {
-                    chrome.downloads.onChanged.removeListener(listener)
-                    const fp = items[0]?.filename?.replace(/\\/g, '/')
-                    if (!fp) {
-                      resolve({ ok: false as const, error: '无法获取下载文件路径' })
-                      return
-                    }
-                    const fileUrl = `file://${fp.startsWith('/') ? '' : '/'}${fp}`
-                    await sendToAria2(fileUrl, `${friendlyName}_noads.ts`, cfg, downloadExtra)
-                    resolve({ ok: true as const, filename: `${friendlyName}_noads.ts` })
-                  })
-                }
-              }
-              chrome.downloads.onChanged.addListener(listener)
-            },
-          )
-        }) as Promise<{ ok: boolean; filename?: string; error?: string }>
+        // aria2 模式：data URL → 落地为本地 file:// m3u8 → aria2.addUri(file://) 让 Motrix 下载+合并 .ts
+        // 复用 download-client.ts 的 materializeDataUrl（处理 chrome.downloads + onChanged 监听）
+        const materialized = await materializeDataUrl(m3u8DataUrl, m3u8OutName)
+        if (!materialized.ok) {
+          return { ok: false as const, error: materialized.error }
+        }
+        const r = await sendToAria2(materialized.fileUrl, `${friendlyName}_noads.ts`, cfg, downloadExtra, /* skipVeloRedirect */ true)
+        return { ok: r.success, filename: r.success ? `${friendlyName}_noads.ts` : undefined, ...(r.message ? { error: r.message } : {}) }
       }
 
       // NDM 模式：发 data URL 给 NDM WebSocket
@@ -554,10 +514,10 @@ export function registerHlsHandlers(): void {
         return { ok: r.success as boolean, filename: outputName, ...(r.message ? { error: r.message } : {}) }
       }
 
-      // sdown 模式：直接推送 cleaned m3u8 文本（push_m3u8），无需 data URL 编码
-      if (cfg.client === 'sdown') {
+      // velo 模式：直接推送 cleaned m3u8 文本（push_m3u8），无需 data URL 编码
+      if (cfg.client === 'velo') {
         const outputName = `${friendlyName}_noads.mp4`
-        const r = await sendToSdownM3u8(ctx.cleaned, ctx.baseUrl, outputName, cfg, downloadExtra)
+        const r = await sendToVeloM3u8(ctx.cleaned, ctx.baseUrl, outputName, cfg, downloadExtra)
         return { ok: r.success as boolean, filename: outputName, ...(r.message ? { error: r.message } : {}) }
       }
 
@@ -568,25 +528,6 @@ export function registerHlsHandlers(): void {
       return { ok: false as const, error: (e as Error).message }
     }
   })
-}
-
-/** 从 m3u8 URL 提取 baseName（剔除技术段，拼接所有有意义路径段） */
-export function extractBaseName(m3u8Url: string): string {
-  const BAD_SEG_RE = /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
-  try {
-    const u = new URL(m3u8Url)
-    const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
-    let name = segs
-      .map((s) => s.replace(/\.[^.]+$/, ''))
-      .filter((s) => s.length >= 2 && !BAD_SEG_RE.test(s))
-      .join('_')
-    if (!name) name = u.hostname.replace(/^www\./, '')
-    name = name.replace(/[\\/:*?"<>|\s]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-    if (name.length > 50) name = name.slice(-50)
-    return name || 'video'
-  } catch {
-    return 'video'
-  }
 }
 
 /** 持久化 cleaned m3u8 上下文（per-tab） */

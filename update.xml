@@ -5,7 +5,7 @@
   发布时将 {version} 替换为实际版本号
 -->
 <gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
-  <app appid="sdown-extension">
-    <updatecheck codebase="https://dl.tekin.cn/sdown-extension/sdown-extension-{version}.crx" version="0.1.0" />
+  <app appid="velo-extension">
+    <updatecheck codebase="https://dl.tekin.cn/velo-extension/velo-extension-{version}.crx" version="0.1.0" />
   </app>
 </gupdate>

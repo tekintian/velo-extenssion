@@ -10,7 +10,7 @@
  *       必须用 chrome.scripting.executeScript world:'MAIN' 或 WXT 的 world:'MAIN' 注入。
  */
 
-import { defineContentScript } from 'wxt/sandbox'
+import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 
 export default defineContentScript({
@@ -39,7 +39,7 @@ export default defineContentScript({
         window.removeEventListener('message', onDelegate)
         installHlsHooks()
       } else {
-        logger.info('[AdClear HLS] Delegated to sdown, reason:', data.reason, '— not hooking')
+        logger.info('[AdClear HLS] Delegated to velo, reason:', data.reason, '— not hooking')
         window.removeEventListener('message', onDelegate)
       }
     })

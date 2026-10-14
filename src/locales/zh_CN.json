@@ -1,9 +1,9 @@
 {
   "ext_description": {
-    "message": "浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 sdown 桌面端下载"
+    "message": "浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 Velo 桌面端下载"
   },
   "ext_name": {
-    "message": "sdown Extension"
+    "message": "Velo Extension"
   },
   "popup_paired": {
     "message": "已配对（端口 $PORT$）",
@@ -26,7 +26,55 @@
     "message": "设置"
   },
   "options_title": {
-    "message": "sdown 扩展设置"
+    "message": "Velo 扩展设置"
+  },
+  "options_subtitle": {
+    "message": "选择要管理的功能模块"
+  },
+  "options_notice_auth": {
+    "message": "ℹ️ 嗅探到的媒体下载时，扩展会自动携带页面请求头用于身份验证（Cookie / Authorization / User-Agent / Referer / Origin），以确保「能见即可下载」。请确保下载客户端地址可信。"
+  },
+  "options_footer_privacy": {
+    "message": "所有数据仅存储在本地 chrome.storage.local，不上报到任何第三方服务器。"
+  },
+  "options_back_to_index": {
+    "message": "返回设置首页"
+  },
+  "options_nav_config": {
+    "message": "配置"
+  },
+  "options_nav_config_desc": {
+    "message": "配对、推送、广告过滤、指纹库、过滤行为"
+  },
+  "options_nav_test": {
+    "message": "m3u8 实测"
+  },
+  "options_nav_test_desc": {
+    "message": "粘贴 URL 测试广告检测，查看命中规则与清洗结果"
+  },
+  "options_nav_rules": {
+    "message": "规则库"
+  },
+  "options_nav_rules_desc": {
+    "message": "查看内置/远程/用户规则，审阅自动建议"
+  },
+  "options_nav_stats": {
+    "message": "统计"
+  },
+  "options_nav_stats_desc": {
+    "message": "过滤统计、Top 站点、规则命中排行、最近报告"
+  },
+  "options_nav_samples": {
+    "message": "样本"
+  },
+  "options_nav_samples_desc": {
+    "message": "广告样本管理，捕获、查看、删除"
+  },
+  "options_nav_data": {
+    "message": "数据"
+  },
+  "options_nav_data_desc": {
+    "message": "导出/导入备份数据，隐私说明"
   },
   "options_pairing_title": {
     "message": "桌面端配对"
@@ -70,10 +118,330 @@
   "options_save_filter": {
     "message": "保存"
   },
+  "options_advanced_config_title": {
+    "message": "广告过滤高级配置"
+  },
+  "options_fingerprint_title": {
+    "message": "指纹库"
+  },
+  "options_enable_fingerprint": {
+    "message": "启用指纹库（基于分片首 64KB SHA-256 哈希识别广告）"
+  },
+  "options_auto_learn_fingerprint": {
+    "message": "自动学习指纹（检测到广告后自动入库）"
+  },
+  "options_fingerprint_mode": {
+    "message": "指纹模式"
+  },
+  "options_fp_mode_off": {
+    "message": "关闭"
+  },
+  "options_fp_mode_suspicious": {
+    "message": "仅可疑分片"
+  },
+  "options_fp_mode_all": {
+    "message": "全部分片"
+  },
+  "options_remote_fp_url": {
+    "message": "远程指纹库 URL"
+  },
+  "options_boost_detect": {
+    "message": "一键增强检测"
+  },
+  "options_boost_result": {
+    "message": "已开启增强检测，当前已学习 $1$ 条指纹",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "options_filter_behavior_title": {
+    "message": "过滤行为"
+  },
+  "options_enable_ad_skip": {
+    "message": "自动跳过广告（播放时自动 seek 跳过广告分片）"
+  },
+  "options_show_page_badge": {
+    "message": "显示页面角标（在视频旁显示已过滤广告数）"
+  },
+  "options_keep_discontinuity": {
+    "message": "广告缺口补 DISCONTINUITY（删除广告分片后补标记）"
+  },
+  "options_log_to_console": {
+    "message": "控制台日志（调试用）"
+  },
+  "options_output_mode": {
+    "message": "输出模式"
+  },
+  "options_mode_m3u8_file": {
+    "message": "m3u8 文件（清洗后文本）"
+  },
+  "options_mode_data_url": {
+    "message": "data: URL（内联 base64）"
+  },
+  "options_mode_passthrough": {
+    "message": "透传（仅检测不清洗）"
+  },
+  "options_mode_disabled": {
+    "message": "禁用"
+  },
+  "options_custom_rules_title": {
+    "message": "自定义规则"
+  },
+  "options_url_patterns": {
+    "message": "URL Pattern（每行一个正则）"
+  },
+  "options_remote_rules_url": {
+    "message": "远程规则 URL"
+  },
+  "options_save_advanced_config": {
+    "message": "保存高级配置"
+  },
+  "options_saved": {
+    "message": "已保存"
+  },
+  "options_save_failed": {
+    "message": "保存失败"
+  },
+  "options_loading": {
+    "message": "加载中…"
+  },
+  "options_refresh": {
+    "message": "刷新"
+  },
+  "options_delete": {
+    "message": "删除"
+  },
   "notify_disconnected_title": {
-    "message": "sdown 未运行"
+    "message": "Velo 未运行"
   },
   "notify_disconnected_body": {
-    "message": "请先启动 sdown 桌面端，扩展将自动重连"
+    "message": "请先启动 Velo 桌面端，扩展将自动重连"
+  },
+  "mse_detected_title": {
+    "message": "检测到 MSE 流媒体"
+  },
+  "mse_detected_body": {
+    "message": "该页面使用 MSE 流式播放，已记录分片指纹。可在面板中查看下载项。"
+  },
+  "options_test_input_title": {
+    "message": "输入测试参数"
+  },
+  "options_test_url_label": {
+    "message": "m3u8 URL"
+  },
+  "options_test_host_label": {
+    "message": "模拟页面 Host（可选）"
+  },
+  "options_test_run": {
+    "message": "拉取并检测"
+  },
+  "options_test_running": {
+    "message": "检测中…"
+  },
+  "options_test_result_title": {
+    "message": "检测结果"
+  },
+  "options_test_mode": {
+    "message": "检测模式"
+  },
+  "options_test_matched_rule": {
+    "message": "命中规则"
+  },
+  "options_test_ad_segments": {
+    "message": "广告分片"
+  },
+  "options_test_ad_duration": {
+    "message": "广告时长"
+  },
+  "options_test_content_duration": {
+    "message": "内容时长"
+  },
+  "options_test_segment_reasons": {
+    "message": "各分片判定理由"
+  },
+  "options_test_cleaned_m3u8": {
+    "message": "清洗后 m3u8"
+  },
+  "options_suggestions_title": {
+    "message": "待审建议"
+  },
+  "options_suggestion_approve": {
+    "message": "采纳"
+  },
+  "options_suggestion_dismiss": {
+    "message": "忽略"
+  },
+  "options_rules_list_title": {
+    "message": "规则列表"
+  },
+  "options_no_rules": {
+    "message": "暂无规则"
+  },
+  "options_rule_source_builtin": {
+    "message": "内置"
+  },
+  "options_rule_source_remote": {
+    "message": "远程"
+  },
+  "options_rule_source_user": {
+    "message": "用户"
+  },
+  "options_ad_patterns": {
+    "message": "广告模式"
+  },
+  "options_stats_summary_title": {
+    "message": "累计统计"
+  },
+  "options_stats_total_ads": {
+    "message": "已过滤广告"
+  },
+  "options_stats_total_ad_duration": {
+    "message": "广告总时长"
+  },
+  "options_stats_total_detections": {
+    "message": "检测次数"
+  },
+  "options_stats_total_content_duration": {
+    "message": "内容总时长"
+  },
+  "options_no_stats": {
+    "message": "暂无统计"
+  },
+  "options_stats_top_hosts": {
+    "message": "Top 站点"
+  },
+  "options_stats_host": {
+    "message": "站点"
+  },
+  "options_stats_ads": {
+    "message": "广告数"
+  },
+  "options_stats_ad_duration": {
+    "message": "广告时长"
+  },
+  "options_stats_top_rules": {
+    "message": "Top 规则"
+  },
+  "options_stats_rule": {
+    "message": "规则"
+  },
+  "options_stats_hits": {
+    "message": "命中"
+  },
+  "options_stats_recent_reports": {
+    "message": "最近报告"
+  },
+  "options_stats_time": {
+    "message": "时间"
+  },
+  "options_stats_ad_total": {
+    "message": "广告/总数"
+  },
+  "options_confirm_clear_stats": {
+    "message": "确定清除所有统计数据？"
+  },
+  "options_clear_stats": {
+    "message": "清除统计"
+  },
+  "options_samples_title": {
+    "message": "广告样本"
+  },
+  "options_capture_sample": {
+    "message": "捕获当前页广告样本"
+  },
+  "options_no_samples": {
+    "message": "暂无样本"
+  },
+  "options_sample_host": {
+    "message": "站点"
+  },
+  "options_sample_time": {
+    "message": "时间点"
+  },
+  "options_sample_window": {
+    "message": "窗口片数"
+  },
+  "options_sample_timestamp": {
+    "message": "捕获时间"
+  },
+  "options_sample_actions": {
+    "message": "操作"
+  },
+  "options_sample_captured": {
+    "message": "样本已捕获"
+  },
+  "options_confirm_clear_samples": {
+    "message": "确定清除所有广告样本？"
+  },
+  "options_clear_all_samples": {
+    "message": "清除全部样本"
+  },
+  "options_export_title": {
+    "message": "导出数据"
+  },
+  "options_export_desc": {
+    "message": "选择要导出的数据集："
+  },
+  "options_export_button": {
+    "message": "导出备份"
+  },
+  "options_data_user_rules": {
+    "message": "用户规则"
+  },
+  "options_data_suggestions": {
+    "message": "待审建议"
+  },
+  "options_data_full_config": {
+    "message": "完整配置"
+  },
+  "options_data_learned_fingerprints": {
+    "message": "已学习指纹"
+  },
+  "options_data_ad_samples": {
+    "message": "广告样本"
+  },
+  "options_import_title": {
+    "message": "导入数据"
+  },
+  "options_import_desc": {
+    "message": "选择导入策略后选择备份文件："
+  },
+  "options_strategy_merge": {
+    "message": "合并（保留现有 + 追加新数据）"
+  },
+  "options_strategy_replace": {
+    "message": "替换（清除现有 + 使用备份数据）"
+  },
+  "options_import_button": {
+    "message": "导入备份"
+  },
+  "options_import_success": {
+    "message": "导入成功"
+  },
+  "options_import_failed": {
+    "message": "导入失败"
+  },
+  "options_privacy_title": {
+    "message": "隐私数据说明"
+  },
+  "options_privacy_scope": {
+    "message": "数据收集范围："
+  },
+  "options_privacy_scope_desc": {
+    "message": "扩展仅在浏览视频页面时嗅探媒体请求（URL、Content-Type、请求头）。"
+  },
+  "options_privacy_storage": {
+    "message": "数据存储："
+  },
+  "options_privacy_storage_desc": {
+    "message": "所有数据存储在本地 chrome.storage.local，不上报到任何第三方服务器。"
+  },
+  "options_privacy_headers": {
+    "message": "请求头转发："
+  },
+  "options_privacy_headers_desc": {
+    "message": "下载时自动携带页面请求头给下载客户端，以确保「能见即可下载」。请确保下载客户端地址可信。"
   }
 }

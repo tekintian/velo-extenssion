@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { useState, useEffect, useCallback } from 'react'
+import { i18n } from '@/lib/i18n'
 import '@/assets/popup.css'
 
 function Popup() {
@@ -14,51 +15,51 @@ function Popup() {
 
   async function loadStatus() {
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'sdown-get-status' })
+      const resp = await chrome.runtime.sendMessage({ type: 'velo-get-status' })
       if (resp) {
         setPaired(resp.paired ?? false)
         if (resp.config?.port) setPort(resp.config.port)
       }
     } catch {
-      setStatus('通信失败')
+      setStatus(i18n('popup_comm_error'))
     }
   }
 
   const handlePair = useCallback(async () => {
     if (!token.trim()) {
-      setStatus('请输入 Token')
+      setStatus(i18n('popup_token_required'))
       return
     }
     try {
       const resp = await chrome.runtime.sendMessage({
-        type: 'sdown-validate-pairing',
+        type: 'velo-validate-pairing',
         token: token.trim(),
         port,
       })
       if (resp?.ok) {
         await chrome.runtime.sendMessage({
-          type: 'sdown-save-pairing',
+          type: 'velo-save-pairing',
           token: token.trim(),
           port,
         })
         setPaired(true)
-        setStatus('配对成功！')
+        setStatus(i18n('popup_pair_success'))
       } else {
-        setStatus('配对失败，请检查 Token 和端口')
+        setStatus(i18n('popup_pair_failed'))
       }
     } catch (e) {
-      setStatus(`配对出错: ${(e as Error).message}`)
+      setStatus(i18n('popup_pair_error', [(e as Error).message]))
     }
   }, [token, port])
 
   const handleClearPairing = useCallback(async () => {
     try {
-      await chrome.runtime.sendMessage({ type: 'sdown-clear-pairing' })
+      await chrome.runtime.sendMessage({ type: 'velo-clear-pairing' })
       setPaired(false)
       setToken('')
-      setStatus('已清除配对')
+      setStatus(i18n('popup_clear_success'))
     } catch (e) {
-      setStatus(`清除出错: ${(e as Error).message}`)
+      setStatus(i18n('popup_clear_error', [(e as Error).message]))
     }
   }, [])
 
@@ -69,18 +70,18 @@ function Popup() {
   return (
     <div className="popup-container">
       <header className="popup-header">
-        <img src="/icons/icon48.png" alt="sdown" className="popup-logo" />
-        <h1>sdown</h1>
+        <img src="/icons/icon48.png" alt="velo" className="popup-logo" />
+        <h1>velo</h1>
       </header>
 
       <div className="popup-status">
         {paired ? (
           <span className="status-paired">
-            ✅ {chrome.i18n.getMessage('popup_paired', [String(port)])}
+            ✅ {i18n('popup_paired', [String(port)])}
           </span>
         ) : (
           <span className="status-unpaired">
-            ❌ {chrome.i18n.getMessage('popup_not_paired')}
+            ❌ {i18n('popup_not_paired')}
           </span>
         )}
       </div>
@@ -88,7 +89,7 @@ function Popup() {
       {!paired && (
         <div className="popup-pair-form">
           <label>
-            端口
+            {i18n('popup_port_label')}
             <input
               type="number"
               value={port}
@@ -98,23 +99,23 @@ function Popup() {
             />
           </label>
           <label>
-            Token
+            {i18n('popup_token_label')}
             <input
               type="text"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="输入配对 Token"
+              placeholder={i18n('popup_token_placeholder')}
             />
           </label>
           <button className="btn-primary" onClick={handlePair}>
-            {chrome.i18n.getMessage('popup_pair_button')}
+            {i18n('popup_pair_button')}
           </button>
         </div>
       )}
 
       {paired && (
         <button className="btn-secondary" onClick={handleClearPairing}>
-          {chrome.i18n.getMessage('popup_repair_button')}
+          {i18n('popup_repair_button')}
         </button>
       )}
 
@@ -122,7 +123,7 @@ function Popup() {
 
       <div className="popup-actions">
         <button className="btn-link" onClick={openOptions}>
-          ⚙️ {chrome.i18n.getMessage('popup_settings_button')}
+          ⚙️ {i18n('popup_settings_button')}
         </button>
       </div>
     </div>

@@ -10,6 +10,16 @@ import type { SiteRule } from './types'
 
 /** 内置规则库 */
 export const BUILTIN_SITE_RULES: SiteRule[] = [
+  // DRM 保护站点：保留全部分片，避免误删付费视频的 DRM/加密内容导致播放损坏
+  // 这些站点使用 Widevine/PlayReady/FairPlay，分片被删会破坏解密链
+  {
+    id: 'drm-protected-sites',
+    name: 'DRM 保护站点（不过滤）',
+    hostPattern: '(?:netflix|disneyplus|primevideo|hbomax|hulu|peacocktv|paramountplus|discoveryplus|showtime|starz|tv\\.apple|spotify|tidal)\\.',
+    adUrlPatterns: [],
+    scoreThreshold: 99, // 极高阈值 = 实际不触发广告检测
+    forceKeep: ['.*'], // 强制保留所有分片
+  },
   {
     id: 'generic-ad-CDN',
     name: '通用广告 CDN 域名',
@@ -43,7 +53,8 @@ export const BUILTIN_SITE_RULES: SiteRule[] = [
     hostPattern: '(?:live|sport|match|cctv|hupu|zhibo)\\w*\\.',
     adUrlPatterns: ['\\/ad\\d*\\/', '\\bclip\\/', '\\bbumper\\/'],
     scoreThreshold: 2, // 直播站 SCTE-35 信号强，放宽阈值
-    mode: 'enumerate', // 直播常不支持 data: URL，默认走 enumerate 回退
+    // enumerate 模式已移除（与 m3u8-file 最终形态一致，且会导致推送静默丢弃）
+    // 直播流改用 m3u8-file 模式，桌面端支持解析绝对 URL 的 m3u8 文本
     forceKeep: [],
   },
 ]

@@ -178,6 +178,21 @@ export function detectAds(parsed: ParsedPlaylist, config: AdFilterConfig): Detec
     }
   }
 
+  // 阈值 0 = 用户明确要求不过滤任何分片（非哨兵值，0 就是 0）
+  if (config.scoreThreshold <= 0) {
+    return {
+      adSegments,
+      reasons,
+      report: {
+        total: segs.length,
+        ads: 0,
+        adDuration: 0,
+        contentDuration: Math.round(segs.reduce((sum, s) => sum + s.duration, 0)),
+        appliedRule: config._appliedRule ?? null,
+      },
+    }
+  }
+
   // URL origin / path 前缀的多数派统计
   const originCount = new Map<string, number>()
   const prefixCount = new Map<string, number>()
@@ -204,7 +219,7 @@ export function detectAds(parsed: ParsedPlaylist, config: AdFilterConfig): Detec
   const durs = segs.map((s) => s.duration).filter((d) => d > 0).sort((a, b) => a - b)
   const median = durs.length ? durs[Math.floor(durs.length / 2)]! : 0
 
-  const threshold = config.scoreThreshold || 3
+  const threshold = config.scoreThreshold
   const patterns = config._patterns ?? []
   const useDurationHeuristic = segs.length >= (config.minSegmentsForStats || 4)
 

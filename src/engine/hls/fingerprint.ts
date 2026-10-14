@@ -23,10 +23,26 @@ const MAX_LEARNED = 5000 // learned 库上限，超过按 firstSeen 淘汰旧的
 const LEARNED_KEY = 'hlsFingerprintsLearned'
 const REMOTE_TTL = 6 * 60 * 60 * 1000 // 远程库 6 小时刷新一次
 
+// P3-3: urlCache 加 LRU 上限，避免长生命周期 SW 累积内存
+// 每个 entry ~100 字节（url + hash），1000 条 ≈ 100KB，安全上限
+const URL_CACHE_MAX = 1000
+
 const urlCache = new Map<string, string | null>() // url → hash|null（内存，本次 SW 生命周期）
 let learned: Map<string, { adName: string; source: string; firstSeen: number }> | null = null
 let remote: Map<string, { adName: string; source: string }> | null = null
 let remoteLoadedAt = 0
+
+/**
+ * 写入 urlCache，超过上限时淘汰最早的条目（Map 保持插入顺序，delete+set 实现 LRU）
+ */
+function setUrlCache(url: string, value: string | null): void {
+  if (urlCache.size >= URL_CACHE_MAX) {
+    // 淘汰最早插入的 key（Map 迭代按插入顺序）
+    const firstKey = urlCache.keys().next().value
+    if (firstKey !== undefined) urlCache.delete(firstKey)
+  }
+  urlCache.set(url, value)
+}
 
 // ---------- learned 读写 ----------
 async function loadLearned(): Promise<void> {
@@ -116,7 +132,7 @@ export async function computeFingerprint(url: string, authHeaders?: Record<strin
       cache: 'no-store',
     })
     if (!res.ok) {
-      urlCache.set(url, null)
+      setUrlCache(url, null)
       return null
     }
     const buf = await res.arrayBuffer()
@@ -125,10 +141,10 @@ export async function computeFingerprint(url: string, authHeaders?: Record<strin
     const hashHex = Array.from(new Uint8Array(hashBuf))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('')
-    urlCache.set(url, hashHex)
+    setUrlCache(url, hashHex)
     return hashHex
   } catch {
-    urlCache.set(url, null)
+    setUrlCache(url, null)
     return null
   }
 }

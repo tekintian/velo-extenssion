@@ -8,9 +8,12 @@
  *   转发给 background processHlsPlaylist，再把结果 postMessage 回 MAIN world。
  *
  *   这样 MAIN world 和 background 之间通过 isolated world 间接通信。
+ *
+ * task #13: 同时转发 MAIN world 的 MSE hook 消息（mse-source-added /
+ *   velo-mse-segment）给 background，让桌面端在 MSE 流被创建时通知用户。
  */
 
-import { defineContentScript } from 'wxt/sandbox'
+import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 
 export default defineContentScript({
@@ -53,8 +56,31 @@ export default defineContentScript({
 
     window.addEventListener('message', async (e: MessageEvent) => {
       if (e.source !== window) return
-      const data = e.data as { __adclear?: string; type?: string; text?: string; baseUrl?: string; pageUrl?: string } | null
-      if (!data || !data.__adclear || data.type !== 'processHlsPlaylist') return
+      const data = e.data as { __adclear?: string; source?: string; type?: string; text?: string; baseUrl?: string; pageUrl?: string; payload?: unknown } | null
+      if (!data) return
+
+      // === task #13: 转发 MAIN world MSE hook 消息给 background ===
+      if (data.source === 'velo-mse' && data.type) {
+        try {
+          if (data.type === 'mse-source-added') {
+            await chrome.runtime.sendMessage({
+              type: 'velo-mse-source',
+              payload: data.payload ?? {},
+            })
+          } else if (data.type === 'velo-mse-segment' || data.type === 'mse-segment-appended') {
+            await chrome.runtime.sendMessage({
+              type: 'velo-mse-segment',
+              payload: data.payload ?? {},
+            })
+          }
+        } catch (err) {
+          logger.warn('[AdClear HLS bridge] forward MSE message failed:', (err as Error).message)
+        }
+        return
+      }
+
+      // HLS 处理消息（原逻辑）
+      if (!data.__adclear || data.type !== 'processHlsPlaylist') return
 
       const reqId = data.__adclear
       logger.info('[AdClear HLS bridge] received processHlsPlaylist from MAIN, reqId:', reqId)

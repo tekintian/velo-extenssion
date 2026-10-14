@@ -65,7 +65,7 @@ export async function buildExport(): Promise<BackupPayload> {
   if (pending.length) p.pendingSuggestions = pending
   if (hlsConfig) p.hlsConfig = hlsConfig
   if (learnedFingerprints) p.learnedFingerprints = learnedFingerprints
-  if (samples.length) p.sample = samples
+  if (samples.length) p.samples = samples
   p.stats = stats
 
   return p as unknown as BackupPayload

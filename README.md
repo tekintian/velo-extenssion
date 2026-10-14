@@ -1,6 +1,6 @@
-# sdown Extension
+# velo Extension
 
-浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 sdown 桌面端下载。
+浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 velo 桌面端下载。
 
 基于 **WXT + TypeScript + React + Tailwind CSS + Vitest** 技术栈构建。
 
@@ -60,7 +60,7 @@ bun run clean
 
 ## 配对
 
-1. 在 sdown 桌面端设置面板点击「生成配对码」
+1. 在 velo 桌面端设置面板点击「生成配对码」
 2. 浏览器扩展 popup 输入 Token + 端口
 3. 点击「配对桌面端」验证
 

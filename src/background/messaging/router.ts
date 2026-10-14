@@ -82,15 +82,5 @@ export function initMessageRouter(): void {
       )
     },
   )
-
-  chrome.runtime.onMessageExternal.addListener(
-    (message, sender, sendResponse) => {
-      logger.info('[messaging] External message from:', sender.id, 'type:', (message as TypedMessage).type)
-      return messageDispatcher(
-        message as TypedMessage,
-        sender,
-        sendResponse,
-      )
-    },
-  )
+  // 注：externally_connectable 已从 manifest 移除，onMessageExternal 永不触发，故不再注册
 }

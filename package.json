@@ -1,7 +1,7 @@
 {
-  "name": "sdown-extension",
+  "name": "velo-extension",
   "version": "0.2.0",
-  "description": "sdown 浏览器扩展 — 嗅探 m3u8 + 广告分片过滤 + 推送到 sdown 桌面端下载",
+  "description": "Velo 浏览器扩展 — 嗅探 m3u8 + 广告分片过滤 + 推送到 Velo 桌面端下载",
   "author": "tekintian <tekintian@gmail.com>",
   "homepage": "https://ai.tekin.cn/",
   "license": "MIT",

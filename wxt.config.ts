@@ -34,7 +34,7 @@ export default defineConfig({
   }) as never,
 
   manifest: ({ mode }) => ({
-    name: 'sdown Extension',
+    name: 'Velo Extension',
     description: '__MSG_ext_description__',
     version,
     default_locale: 'zh_CN',
@@ -48,11 +48,15 @@ export default defineConfig({
       'scripting',
       'notifications',
       'activeTab',
+      'downloads',
     ],
 
     host_permissions: [
       'http://*/*',
       'https://*/*',
+      // FTP / 本地文件嗅探（移植自 NDM bg.js：onBeforeRequest 匹配 ftp:// + file:///）
+      'ftp://*/*',
+      'file:///*',
     ],
 
     content_security_policy: {
@@ -67,7 +71,5 @@ export default defineConfig({
       '48': 'icons/icon48.png',
       '128': 'icons/icon128.png',
     },
-
-    externally_connectable: {},
   }),
 })

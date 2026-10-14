@@ -12,8 +12,14 @@
 import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
 import { clearMediaItems, getMediaItems, startSniffer, stopSniffer, isSnifferRunning, addMediaItemExternal, pairDashItems } from './sniffer'
-import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToSdownDash } from './download-client'
+import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToVeloDash } from './download-client'
 import type { DownloadClientConfig } from './types'
+import {
+  sniffFacebookEmbed,
+  parseYouTubeScriptFormats,
+  parseVimeoScriptProgressive,
+} from './site-sniffers'
+import { setDeleteKeyDown } from './delete-key-state'
 
 /** 启动媒体嗅探（webRequest 监听），由 background.ts initBackground 调用 */
 export function startMediaSniffer(): void {
@@ -36,6 +42,16 @@ export function registerMediaHandlers(): void {
     return { tabId: sender.tab?.id ?? 0 }
   })
 
+  // === Delete 键状态接收（NDM ct.js 行 1-2 → velo delete-key.content.ts） ===
+  // content script 监听 keydown/keyup 的 Delete 键，通过消息告知 background
+  // background 在 onBeforeSendHeaders 阶段读取 getDeleteKeyDown() 快照到 pending.isKeyDown
+  // onHeadersReceived 阶段读取 pending.isKeyDown 决定是否跳过拦截（让浏览器原生下载）
+  registerHandler<{ pressed: boolean }>('deleteKeyStateChanged', async (message) => {
+    const { pressed } = message.payload
+    setDeleteKeyDown(pressed)
+    return { success: true as const }
+  })
+
   registerHandler<{ tabId: number }>('getMediaItems', async (message) => {
     const { tabId } = message.payload
     pairDashItems(tabId)
@@ -56,6 +72,38 @@ export function registerMediaHandlers(): void {
     addMediaItemExternal(tabId, url, label, ext)
     logger.info('[media] external media item added:', ext, url.slice(0, 80), 'tabId:', tabId)
     return { success: true as const }
+  })
+
+  // === NDM ct.js 100% 移植的站点嗅探 handler ===
+
+  // Facebook 视频嵌入抓取（NDM ct.js ga 函数）
+  // 由 content script MutationObserver 检测到 /videos/{id}/ 链接时触发
+  registerHandler<{ videoId: string }>('sniffFacebookEmbed', async (message, sender) => {
+    const { videoId } = message.payload
+    const tabId = sender.tab?.id ?? 0
+    if (tabId === 0 || !videoId) return { success: false as const }
+    await sniffFacebookEmbed(tabId, videoId)
+    return { success: true as const }
+  })
+
+  // YouTube <script> 标签扫描（NDM ct.js za 函数 YouTube 分支）
+  // 由 content script 在 DOMContentLoaded 扫描所有 <script> innerText 时触发
+  registerHandler<{ scriptText: string }>('parseYouTubeScriptFormats', async (message, sender) => {
+    const { scriptText } = message.payload
+    const tabId = sender.tab?.id ?? 0
+    if (tabId === 0 || !scriptText) return { success: false as const }
+    const parsed = parseYouTubeScriptFormats(tabId, scriptText)
+    return { success: true as const, parsed }
+  })
+
+  // Vimeo <script> 标签扫描（NDM ct.js za 函数 Vimeo 分支）
+  // 由 content script 在 DOMContentLoaded 扫描所有 <script> innerText 时触发
+  registerHandler<{ scriptText: string }>('parseVimeoScriptProgressive', async (message, sender) => {
+    const { scriptText } = message.payload
+    const tabId = sender.tab?.id ?? 0
+    if (tabId === 0 || !scriptText) return { success: false as const }
+    const parsed = parseVimeoScriptProgressive(tabId, scriptText)
+    return { success: true as const, parsed }
   })
 
   registerHandler<{ url: string; fileName?: string; pageUrl?: string; contentType?: string; contentDisposition?: string; method?: string; requestBody?: string; requestHeaders?: Record<string, string> }>('sendToDownload', async (message, sender) => {
@@ -121,9 +169,9 @@ export function registerMediaHandlers(): void {
 
     const extra = { pageUrl: finalPageUrl, cookies, requestHeaders: dashRequestHeaders }
 
-    // sdown 客户端：推送 push_dash（支持音视频合并）
-    if (cfg.client === 'sdown') {
-      return await sendToSdownDash(videoUrl, audioUrl, fileName, cfg, extra)
+    // velo 客户端：推送 push_dash（支持音视频合并）
+    if (cfg.client === 'velo') {
+      return await sendToVeloDash(videoUrl, audioUrl, fileName, cfg, extra)
     }
 
     // aria2/ndm/native：分别推送 video + audio，提示用户需手动合并
@@ -141,7 +189,7 @@ export function registerMediaHandlers(): void {
     if (!videoResult.success || !audioResult.success) {
       return {
         success: false,
-        message: `视频: ${videoResult.message ?? 'ok'}, 音频: ${audioResult.message ?? 'ok'}（非 sdown 客户端不支持自动合并，请用 FFmpeg 手动合并）`,
+        message: `视频: ${videoResult.message ?? 'ok'}, 音频: ${audioResult.message ?? 'ok'}（非 velo 客户端不支持自动合并，请用 FFmpeg 手动合并）`,
       }
     }
     return {
@@ -161,9 +209,9 @@ export function registerMediaHandlers(): void {
       rpcHost: cfg.rpcHost ?? 'localhost',
       rpcPort: cfg.rpcPort ?? 16816,
       rpcSecret: cfg.rpcSecret ?? '',
-      sdownHost: cfg.sdownHost ?? '127.0.0.1',
-      sdownPort: cfg.sdownPort ?? 16888,
-      sdownToken: cfg.sdownToken ?? '',
+      veloHost: cfg.veloHost ?? '127.0.0.1',
+      veloPort: cfg.veloPort ?? 16888,
+      veloToken: cfg.veloToken ?? '',
     })
     logger.info('[media] download config saved:', cfg.client)
     return { success: true as const }

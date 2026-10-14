@@ -1,9 +1,9 @@
 {
   "ext_description": {
-    "message": "Browser m3u8 sniffer + ad segment filter + push to sdown desktop for download"
+    "message": "Browser m3u8 sniffer + ad segment filter + push to Velo desktop for download"
   },
   "ext_name": {
-    "message": "sdown Extension"
+    "message": "Velo Extension"
   },
   "popup_paired": {
     "message": "Paired (port $PORT$)",
@@ -25,8 +25,44 @@
   "popup_settings_button": {
     "message": "Settings"
   },
+  "popup_comm_error": {
+    "message": "Communication failed"
+  },
+  "popup_token_required": {
+    "message": "Please enter Token"
+  },
+  "popup_pair_success": {
+    "message": "Paired successfully!"
+  },
+  "popup_pair_failed": {
+    "message": "Pair failed, check Token and port"
+  },
+  "popup_pair_error": {
+    "message": "Pair error: $ERROR$",
+    "placeholders": {
+      "ERROR": { "content": "$1" }
+    }
+  },
+  "popup_clear_success": {
+    "message": "Pairing cleared"
+  },
+  "popup_clear_error": {
+    "message": "Clear error: $ERROR$",
+    "placeholders": {
+      "ERROR": { "content": "$1" }
+    }
+  },
+  "popup_port_label": {
+    "message": "Port"
+  },
+  "popup_token_label": {
+    "message": "Token"
+  },
+  "popup_token_placeholder": {
+    "message": "Enter pairing Token"
+  },
   "options_title": {
-    "message": "sdown Extension Settings"
+    "message": "Velo Extension Settings"
   },
   "options_pairing_title": {
     "message": "Desktop Pairing"
@@ -71,9 +107,15 @@
     "message": "Save"
   },
   "notify_disconnected_title": {
-    "message": "sdown is not running"
+    "message": "Velo is not running"
   },
   "notify_disconnected_body": {
-    "message": "Please start the sdown desktop app; the extension will reconnect automatically"
+    "message": "Please start the Velo desktop app; the extension will reconnect automatically"
+  },
+  "mse_detected_title": {
+    "message": "MSE stream detected"
+  },
+  "mse_detected_body": {
+    "message": "This page uses MSE streaming; segment fingerprints have been recorded. See the in-page panel for downloads."
   }
 }

@@ -1,9 +1,9 @@
 {
   "ext_description": {
-    "message": "浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 sdown 桌面端下载"
+    "message": "浏览器嗅探 m3u8 + 广告分片过滤 + 推送到 Velo 桌面端下载"
   },
   "ext_name": {
-    "message": "sdown Extension"
+    "message": "Velo Extension"
   },
   "popup_paired": {
     "message": "已配对（端口 $PORT$）",
@@ -25,8 +25,44 @@
   "popup_settings_button": {
     "message": "设置"
   },
+  "popup_comm_error": {
+    "message": "通信失败"
+  },
+  "popup_token_required": {
+    "message": "请输入 Token"
+  },
+  "popup_pair_success": {
+    "message": "配对成功！"
+  },
+  "popup_pair_failed": {
+    "message": "配对失败，请检查 Token 和端口"
+  },
+  "popup_pair_error": {
+    "message": "配对出错: $ERROR$",
+    "placeholders": {
+      "ERROR": { "content": "$1" }
+    }
+  },
+  "popup_clear_success": {
+    "message": "已清除配对"
+  },
+  "popup_clear_error": {
+    "message": "清除出错: $ERROR$",
+    "placeholders": {
+      "ERROR": { "content": "$1" }
+    }
+  },
+  "popup_port_label": {
+    "message": "端口"
+  },
+  "popup_token_label": {
+    "message": "Token"
+  },
+  "popup_token_placeholder": {
+    "message": "输入配对 Token"
+  },
   "options_title": {
-    "message": "sdown 扩展设置"
+    "message": "Velo 扩展设置"
   },
   "options_pairing_title": {
     "message": "桌面端配对"
@@ -71,9 +107,15 @@
     "message": "保存"
   },
   "notify_disconnected_title": {
-    "message": "sdown 未运行"
+    "message": "Velo 未运行"
   },
   "notify_disconnected_body": {
-    "message": "请先启动 sdown 桌面端，扩展将自动重连"
+    "message": "请先启动 Velo 桌面端，扩展将自动重连"
+  },
+  "mse_detected_title": {
+    "message": "检测到 MSE 流媒体"
+  },
+  "mse_detected_body": {
+    "message": "该页面使用 MSE 流式播放，已记录分片指纹。可在面板中查看下载项。"
   }
 }

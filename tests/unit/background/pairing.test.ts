@@ -57,7 +57,7 @@ describe('PairingManager', () => {
     it('saves pairing info with timestamp', async () => {
       mockSet.mockResolvedValueOnce(undefined)
       await manager.savePairing('my-token', 9999)
-      expect(mockSet).toHaveBeenCalledWith('_sdownPairing', expect.objectContaining({
+      expect(mockSet).toHaveBeenCalledWith('_veloPairing', expect.objectContaining({
         token: 'my-token',
         port: 9999,
         paired_at: expect.any(Number),
@@ -69,7 +69,7 @@ describe('PairingManager', () => {
     it('removes pairing from storage', async () => {
       mockRemove.mockResolvedValueOnce(undefined)
       await manager.clearPairing()
-      expect(mockRemove).toHaveBeenCalledWith('_sdownPairing')
+      expect(mockRemove).toHaveBeenCalledWith('_veloPairing')
     })
   })
 })

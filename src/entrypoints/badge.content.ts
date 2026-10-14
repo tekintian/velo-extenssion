@@ -16,7 +16,7 @@
  *    点击 → 调 background downloadCleanedM3u8
  */
 
-import { defineContentScript } from 'wxt/sandbox'
+import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 
 const BADGE_ID = '__adclear_hls_badge__'

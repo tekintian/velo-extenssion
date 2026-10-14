@@ -77,10 +77,10 @@ export const persistentStorage = {
 
 export const configStore = {
   async get<T>(): Promise<T | undefined> {
-    return persistentStorage.get<T>('_sdownConfig')
+    return persistentStorage.get<T>('_veloConfig')
   },
   async set<T>(value: T): Promise<void> {
-    return persistentStorage.set('_sdownConfig', value)
+    return persistentStorage.set('_veloConfig', value)
   },
 }
 

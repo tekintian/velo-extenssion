@@ -52,19 +52,19 @@ export interface DashPair {
 /** 下载客户端配置 */
 export interface DownloadClientConfig {
   /** 客户端类型 */
-  readonly client: 'ndm' | 'aria2' | 'sdown' | 'native'
+  readonly client: 'ndm' | 'aria2' | 'velo' | 'native'
   /** aria2 RPC host */
   readonly rpcHost: string
-  /** aria2 RPC port (Motrix 默认 16816) */
+  /** aria2 RPC port (Velo 默认 16816) */
   readonly rpcPort: number
   /** aria2 RPC secret (可选) */
   readonly rpcSecret: string
-  /** sdown push server host */
-  readonly sdownHost: string
-  /** sdown push server port (默认 16888) */
-  readonly sdownPort: number
-  /** sdown push server token (配对认证) */
-  readonly sdownToken: string
+  /** velo push server host */
+  readonly veloHost: string
+  /** velo push server port (默认 16888) */
+  readonly veloPort: number
+  /** velo push server token (配对认证) */
+  readonly veloToken: string
 }
 
 /** 默认下载客户端配置 */
@@ -73,7 +73,7 @@ export const DEFAULT_DOWNLOAD_CONFIG: DownloadClientConfig = {
   rpcHost: 'localhost',
   rpcPort: 16816,
   rpcSecret: '',
-  sdownHost: '127.0.0.1',
-  sdownPort: 16888,
-  sdownToken: 'ndm-auto',
+  veloHost: '127.0.0.1',
+  veloPort: 16888,
+  veloToken: 'ndm-auto',
 }

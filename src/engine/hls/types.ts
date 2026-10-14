@@ -93,7 +93,7 @@ export interface SiteRule {
 // 配置
 // ============================================================================
 
-export type AdDeliveryMode = 'data-url' | 'enumerate' | 'passthrough' | 'm3u8-file' | 'disabled'
+export type AdDeliveryMode = 'data-url' | 'passthrough' | 'm3u8-file' | 'disabled'
 
 export type FingerprintMode = 'off' | 'suspicious-only' | 'all'
 
@@ -166,6 +166,5 @@ export type ProcessResult =
   | { readonly mode: 'master'; readonly url: string; readonly report: { readonly master: true; readonly variants: number; readonly appliedRule: SiteRule | null } }
   | { readonly mode: 'no-ads'; readonly url: string; readonly report: DetectionReport; readonly segments: readonly Segment[] }
   | { readonly mode: 'passthrough'; readonly url: string; readonly report: DetectionReport; readonly reasons: Record<number, string[]>; readonly adSegmentUrls: string[]; readonly segments: readonly Segment[]; readonly adRanges: AdRange[] }
-  | { readonly mode: 'enumerate'; readonly segments: readonly Segment[]; readonly report: DetectionReport; readonly reasons: Record<number, string[]>; readonly adSegmentUrls: string[]; readonly adRanges: AdRange[] }
   | { readonly mode: 'm3u8-file'; readonly cleaned: string; readonly report: DetectionReport; readonly reasons: Record<number, string[]>; readonly adSegmentUrls: string[]; readonly segments: readonly Segment[]; readonly adRanges: AdRange[] }
   | { readonly mode: 'data-url'; readonly url: string; readonly cleaned: string; readonly report: DetectionReport; readonly reasons: Record<number, string[]>; readonly adSegmentUrls: string[]; readonly segments: readonly Segment[]; readonly adRanges: AdRange[] }

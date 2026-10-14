@@ -128,7 +128,8 @@ export async function processPlaylist(
   const detection = detectAds(parsed, config)
 
   // 指纹库二次过滤：对未被标签信号命中的分片，取首 64KB SHA-256 查库
-  if (config.enableFingerprint && config.fingerprintMode !== 'off') {
+  // threshold=0 = 用户明确要求不过滤（detectAds 已早返回空，指纹库也不跑）
+  if (config.scoreThreshold > 0 && config.enableFingerprint && config.fingerprintMode !== 'off') {
     await initFingerprint(config.remoteFingerprintsUrl)
 
     // 多数派 origin（suspicious-only 模式判定跨域用）
@@ -267,18 +268,6 @@ export async function processPlaylist(
       reasons: reasonsExport,
       adSegmentUrls,
       segments: parsed.segments,
-      adRanges,
-    }
-  }
-
-  if (config.mode === 'enumerate') {
-    const contentSegs = parsed.segments.filter((s) => !detection.adSegments.has(s.index))
-    return {
-      mode: 'enumerate',
-      segments: contentSegs,
-      report: detection.report,
-      reasons: reasonsExport,
-      adSegmentUrls,
       adRanges,
     }
   }

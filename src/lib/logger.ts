@@ -13,8 +13,8 @@ function log(level: LogLevel, prefix: string, message: string, ...args: unknown[
 }
 
 export const logger = {
-  debug: (msg: string, ...args: unknown[]) => log('debug', 'sdown', msg, ...args),
-  info: (msg: string, ...args: unknown[]) => log('info', 'sdown', msg, ...args),
-  warn: (msg: string, ...args: unknown[]) => log('warn', 'sdown', msg, ...args),
-  error: (msg: string, ...args: unknown[]) => log('error', 'sdown', msg, ...args),
+  debug: (msg: string, ...args: unknown[]) => log('debug', 'velo', msg, ...args),
+  info: (msg: string, ...args: unknown[]) => log('info', 'velo', msg, ...args),
+  warn: (msg: string, ...args: unknown[]) => log('warn', 'velo', msg, ...args),
+  error: (msg: string, ...args: unknown[]) => log('error', 'velo', msg, ...args),
 }
