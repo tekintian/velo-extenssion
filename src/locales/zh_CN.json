@@ -25,6 +25,63 @@
   "popup_settings_button": {
     "message": "设置"
   },
+  "popup_port_label": {
+    "message": "端口"
+  },
+  "popup_token_label": {
+    "message": "Token（可选）"
+  },
+  "popup_token_placeholder": {
+    "message": "留空则无需 Token"
+  },
+  "popup_token_required": {
+    "message": "此客户端需要 Token 才能连接"
+  },
+  "popup_pair_success": {
+    "message": "配对成功"
+  },
+  "popup_pair_failed": {
+    "message": "配对失败，请检查端口和 Token"
+  },
+  "popup_pair_error": {
+    "message": "配对出错：$ERROR$",
+    "placeholders": {
+      "ERROR": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_clear_success": {
+    "message": "已清除配对"
+  },
+  "popup_clear_error": {
+    "message": "清除配对出错：$ERROR$",
+    "placeholders": {
+      "ERROR": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_comm_error": {
+    "message": "通信错误"
+  },
+  "popup_probing": {
+    "message": "正在探测客户端..."
+  },
+  "popup_auto_connect_button": {
+    "message": "自动连接"
+  },
+  "popup_auto_connected": {
+    "message": "已自动连接（端口 $PORT$）",
+    "placeholders": {
+      "PORT": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_client_not_found": {
+    "message": "未检测到 Velo 客户端，请确认已启动"
+  },
   "options_title": {
     "message": "Velo 扩展设置"
   },

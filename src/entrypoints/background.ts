@@ -2,7 +2,7 @@ import { defineBackground } from 'wxt/utils/define-background'
 import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
 import { initMessageRouter, registerHandler } from '@/background/messaging/router'
-import { PairingManager } from '@/background/pairing'
+import { PairingManager, type ProbeResult } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
 import { startSniffer, setM3u8ProcessHandler, getMediaItems } from '@/background/media/sniffer'
 import { setPushClient, pushHls, pushUrl, pushNormal } from '@/background/media/download-client'
@@ -190,13 +190,12 @@ function registerHandlers(): void {
     return { ok: true }
   })
 
-  registerHandler<{ token: string; port?: number }>('velo-save-pairing', async (message) => {
+  registerHandler<{ token?: string; port?: number }>('velo-save-pairing', async (message) => {
     const { token, port } = message.payload
-    if (!token) return { ok: false, error: 'Token required' }
     const pairing = new PairingManager()
-    await pairing.savePairing(token, port ?? DEFAULT_SDOWN_CONFIG.port)
+    await pairing.savePairing(token ?? '', port ?? DEFAULT_SDOWN_CONFIG.port)
     if (pushClient) pushClient.disconnect()
-    pushClient = createPushClient(config.pushChannel, port ?? DEFAULT_SDOWN_CONFIG.port, token)
+    pushClient = createPushClient(config.pushChannel, port ?? DEFAULT_SDOWN_CONFIG.port, token ?? '')
     pushClient.connect()
     setPushClient(pushClient)
     return { ok: true }
@@ -213,11 +212,26 @@ function registerHandlers(): void {
     return { ok: true }
   })
 
-  registerHandler<{ token: string; port?: number }>('velo-validate-pairing', async (message) => {
+  registerHandler<{ token?: string; port?: number }>('velo-validate-pairing', async (message) => {
     const { token, port } = message.payload
     const pairing = new PairingManager()
     const valid = await pairing.validatePairing(token ?? '', port ?? DEFAULT_SDOWN_CONFIG.port)
     return { ok: valid }
+  })
+
+  registerHandler<{ port?: number }>('velo-probe-client', async (message) => {
+    const pairing = new PairingManager()
+    const probePorts = [DEFAULT_SDOWN_CONFIG.port]
+    if (message.payload?.port && message.payload.port !== DEFAULT_SDOWN_CONFIG.port) {
+      probePorts.push(message.payload.port)
+    }
+    const result = await pairing.probeClient(probePorts)
+    return result as ProbeResult
+  })
+
+  registerHandler('velo-auto-connect', async () => {
+    const result = await tryAutoConnect()
+    return result
   })
 }
 
@@ -239,6 +253,8 @@ async function initBackground(): Promise<void> {
     pushClient = createPushClient(config.pushChannel, pairingInfo.port, pairingInfo.token)
     pushClient.connect()
     setPushClient(pushClient)
+  } else {
+    void tryAutoConnect()
   }
 
   startSniffer()
@@ -257,6 +273,27 @@ async function initBackground(): Promise<void> {
   })
 
   logger.info('Background async init done')
+}
+
+async function tryAutoConnect(): Promise<ProbeResult & { connected?: boolean }> {
+  const pairing = new PairingManager()
+  const probePorts = [DEFAULT_SDOWN_CONFIG.port]
+  if (config.port && config.port !== DEFAULT_SDOWN_CONFIG.port) {
+    probePorts.push(config.port)
+  }
+  const result = await pairing.probeClient(probePorts)
+  if (result.available) {
+    const token = result.tokenRequired ? (config.token ?? '') : ''
+    await pairing.savePairing(token, result.port)
+    if (pushClient) pushClient.disconnect()
+    pushClient = createPushClient(config.pushChannel, result.port, token)
+    pushClient.connect()
+    setPushClient(pushClient)
+    logger.info('Auto-connected to Velo client on port', result.port, 'tokenRequired:', result.tokenRequired)
+    return { ...result, connected: true }
+  }
+  logger.info('Velo client not detected, auto-connect skipped')
+  return { ...result, connected: false }
 }
 
 async function veloProcessM3u8(

@@ -12,7 +12,7 @@
 import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
 import { clearMediaItems, getMediaItems, startSniffer, stopSniffer, isSnifferRunning, addMediaItemExternal, pairDashItems } from './sniffer'
-import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToVeloDash } from './download-client'
+import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToVeloDash, getPushClient, buildVeloHeaders } from './download-client'
 import type { DownloadClientConfig } from './types'
 import {
   sniffFacebookEmbed,
@@ -169,7 +169,33 @@ export function registerMediaHandlers(): void {
 
     const extra = { pageUrl: finalPageUrl, cookies, requestHeaders: dashRequestHeaders }
 
-    // velo 客户端：推送 push_dash（支持音视频合并）
+    const pushClient = getPushClient()
+    if (pushClient) {
+      try {
+        const headers = buildVeloHeaders(extra)
+        const msg = {
+          action: 'push_dash' as const,
+          video_url: videoUrl,
+          audio_url: audioUrl,
+          url: undefined as string | undefined,
+          m3u8_text: undefined as string | undefined,
+          base_url: undefined as string | undefined,
+          headers,
+          options: {
+            filename: fileName,
+            output_dir: undefined as string | undefined,
+            merge_format: 'ts',
+            extra_headers: undefined as Record<string, string> | undefined,
+          },
+        }
+        await pushClient.push(msg)
+        logger.info('[media] pushed DASH via PushClient: video=', videoUrl.slice(0, 80), 'audio=', audioUrl.slice(0, 80))
+        return { success: true }
+      } catch (e) {
+        logger.warn('[media] PushClient DASH push failed, falling back:', (e as Error).message)
+      }
+    }
+
     if (cfg.client === 'velo') {
       return await sendToVeloDash(videoUrl, audioUrl, fileName, cfg, extra)
     }

@@ -5,6 +5,7 @@ import '@/assets/popup.css'
 
 function Popup() {
   const [paired, setPaired] = useState(false)
+  const [probing, setProbing] = useState(false)
   const [port, setPort] = useState(16888)
   const [token, setToken] = useState('')
   const [status, setStatus] = useState('')
@@ -19,17 +20,36 @@ function Popup() {
       if (resp) {
         setPaired(resp.paired ?? false)
         if (resp.config?.port) setPort(resp.config.port)
+        if (resp.config?.token) setToken(resp.config.token)
+      }
+      if (!resp?.paired) {
+        void handleAutoConnect()
       }
     } catch {
       setStatus(i18n('popup_comm_error'))
     }
   }
 
-  const handlePair = useCallback(async () => {
-    if (!token.trim()) {
-      setStatus(i18n('popup_token_required'))
-      return
+  const handleAutoConnect = useCallback(async () => {
+    setProbing(true)
+    setStatus(i18n('popup_probing'))
+    try {
+      const resp = await chrome.runtime.sendMessage({ type: 'velo-auto-connect' })
+      if (resp?.connected) {
+        setPaired(true)
+        if (resp.port) setPort(resp.port)
+        setStatus(i18n('popup_auto_connected', [String(resp.port)]))
+      } else {
+        setStatus(i18n('popup_client_not_found'))
+      }
+    } catch {
+      setStatus(i18n('popup_client_not_found'))
+    } finally {
+      setProbing(false)
     }
+  }, [])
+
+  const handlePair = useCallback(async () => {
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'velo-validate-pairing',
@@ -57,7 +77,7 @@ function Popup() {
       await chrome.runtime.sendMessage({ type: 'velo-clear-pairing' })
       setPaired(false)
       setToken('')
-      setStatus(i18n('popup_clear_success'))
+      setStatus('')
     } catch (e) {
       setStatus(i18n('popup_clear_error', [(e as Error).message]))
     }
@@ -107,8 +127,11 @@ function Popup() {
               placeholder={i18n('popup_token_placeholder')}
             />
           </label>
-          <button className="btn-primary" onClick={handlePair}>
+          <button className="btn-primary" onClick={handlePair} disabled={probing}>
             {i18n('popup_pair_button')}
+          </button>
+          <button className="btn-secondary" onClick={handleAutoConnect} disabled={probing}>
+            {probing ? i18n('popup_probing') : i18n('popup_auto_connect_button')}
           </button>
         </div>
       )}

@@ -1,6 +1,45 @@
 import { defineConfig } from 'wxt'
 import tailwindcss from '@tailwindcss/vite'
 import { version } from './package.json'
+import { resolve } from 'path'
+import { cpSync, existsSync, mkdirSync } from 'fs'
+import type { Plugin } from 'vite'
+
+function localesSyncPlugin(): Plugin {
+  const localesSrc = resolve(__dirname, 'src/locales')
+  const localesDest = resolve(__dirname, 'public/_locales')
+  const localeDirs = ['zh_CN', 'en_US']
+
+  function syncLocales() {
+    for (const dir of localeDirs) {
+      const src = resolve(localesSrc, `${dir}.json`)
+      const destDir = resolve(localesDest, dir)
+      if (!existsSync(src)) continue
+      if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
+      cpSync(src, resolve(destDir, 'messages.json'))
+    }
+  }
+
+  return {
+    name: 'vite-plugin-locales-sync',
+    buildStart() {
+      syncLocales()
+    },
+    configureServer(server) {
+      server.watcher.add(localesSrc)
+      server.watcher.on('change', (file) => {
+        if (file.startsWith(localesSrc)) {
+          syncLocales()
+        }
+      })
+      server.watcher.on('add', (file) => {
+        if (file.startsWith(localesSrc)) {
+          syncLocales()
+        }
+      })
+    },
+  }
+}
 
 export default defineConfig({
   srcDir: 'src',
@@ -15,7 +54,7 @@ export default defineConfig({
   },
 
   vite: ({ mode }) => ({
-    plugins: [tailwindcss() as never],
+    plugins: [tailwindcss() as never, localesSyncPlugin() as never],
     define: {
       __DEV__: mode === 'development',
     },
@@ -42,6 +81,7 @@ export default defineConfig({
 
     permissions: [
       'webRequest',
+      'webNavigation',
       'cookies',
       'contextMenus',
       'storage',

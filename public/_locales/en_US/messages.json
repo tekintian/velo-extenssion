@@ -25,44 +25,113 @@
   "popup_settings_button": {
     "message": "Settings"
   },
-  "popup_comm_error": {
-    "message": "Communication failed"
+  "popup_port_label": {
+    "message": "Port"
+  },
+  "popup_token_label": {
+    "message": "Token (optional)"
+  },
+  "popup_token_placeholder": {
+    "message": "Leave empty if no token required"
   },
   "popup_token_required": {
-    "message": "Please enter Token"
+    "message": "This client requires a token to connect"
   },
   "popup_pair_success": {
-    "message": "Paired successfully!"
+    "message": "Pairing successful"
   },
   "popup_pair_failed": {
-    "message": "Pair failed, check Token and port"
+    "message": "Pairing failed, check port and token"
   },
   "popup_pair_error": {
-    "message": "Pair error: $ERROR$",
+    "message": "Pairing error: $ERROR$",
     "placeholders": {
-      "ERROR": { "content": "$1" }
+      "ERROR": {
+        "content": "$1"
+      }
     }
   },
   "popup_clear_success": {
     "message": "Pairing cleared"
   },
   "popup_clear_error": {
-    "message": "Clear error: $ERROR$",
+    "message": "Clear pairing error: $ERROR$",
     "placeholders": {
-      "ERROR": { "content": "$1" }
+      "ERROR": {
+        "content": "$1"
+      }
     }
   },
-  "popup_port_label": {
-    "message": "Port"
+  "popup_comm_error": {
+    "message": "Communication error"
   },
-  "popup_token_label": {
-    "message": "Token"
+  "popup_probing": {
+    "message": "Probing client..."
   },
-  "popup_token_placeholder": {
-    "message": "Enter pairing Token"
+  "popup_auto_connect_button": {
+    "message": "Auto Connect"
+  },
+  "popup_auto_connected": {
+    "message": "Auto-connected (port $PORT$)",
+    "placeholders": {
+      "PORT": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_client_not_found": {
+    "message": "Velo client not detected, please make sure it is running"
   },
   "options_title": {
     "message": "Velo Extension Settings"
+  },
+  "options_subtitle": {
+    "message": "Select a feature module to manage"
+  },
+  "options_notice_auth": {
+    "message": "ℹ️ When downloading sniffed media, the extension automatically carries page request headers for authentication (Cookie / Authorization / User-Agent / Referer / Origin) to ensure \"if you can see it, you can download it\". Make sure the download client address is trusted."
+  },
+  "options_footer_privacy": {
+    "message": "All data is stored locally in chrome.storage.local and is never sent to any third-party server."
+  },
+  "options_back_to_index": {
+    "message": "Back to Settings"
+  },
+  "options_nav_config": {
+    "message": "Configuration"
+  },
+  "options_nav_config_desc": {
+    "message": "Pairing, push, ad filter, fingerprint, filter behavior"
+  },
+  "options_nav_test": {
+    "message": "m3u8 Test"
+  },
+  "options_nav_test_desc": {
+    "message": "Paste URL to test ad detection, view matched rules and cleaned result"
+  },
+  "options_nav_rules": {
+    "message": "Rules"
+  },
+  "options_nav_rules_desc": {
+    "message": "View built-in/remote/user rules, review auto-suggestions"
+  },
+  "options_nav_stats": {
+    "message": "Statistics"
+  },
+  "options_nav_stats_desc": {
+    "message": "Filter stats, top hosts, rule hit ranking, recent reports"
+  },
+  "options_nav_samples": {
+    "message": "Samples"
+  },
+  "options_nav_samples_desc": {
+    "message": "Ad sample management: capture, view, delete"
+  },
+  "options_nav_data": {
+    "message": "Data"
+  },
+  "options_nav_data_desc": {
+    "message": "Export/import backup data, privacy notice"
   },
   "options_pairing_title": {
     "message": "Desktop Pairing"
@@ -106,6 +175,101 @@
   "options_save_filter": {
     "message": "Save"
   },
+  "options_advanced_config_title": {
+    "message": "Advanced Ad Filter Config"
+  },
+  "options_fingerprint_title": {
+    "message": "Fingerprint"
+  },
+  "options_enable_fingerprint": {
+    "message": "Enable fingerprint (identify ads via SHA-256 hash of first 64KB)"
+  },
+  "options_auto_learn_fingerprint": {
+    "message": "Auto-learn fingerprint (add detected ads to library automatically)"
+  },
+  "options_fingerprint_mode": {
+    "message": "Fingerprint Mode"
+  },
+  "options_fp_mode_off": {
+    "message": "Off"
+  },
+  "options_fp_mode_suspicious": {
+    "message": "Suspicious Only"
+  },
+  "options_fp_mode_all": {
+    "message": "All Segments"
+  },
+  "options_remote_fp_url": {
+    "message": "Remote Fingerprint URL"
+  },
+  "options_boost_detect": {
+    "message": "Boost Detection"
+  },
+  "options_boost_result": {
+    "message": "Boost detection enabled. $1$ fingerprints learned.",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "options_filter_behavior_title": {
+    "message": "Filter Behavior"
+  },
+  "options_enable_ad_skip": {
+    "message": "Auto-skip ads (seek past ad segments during playback)"
+  },
+  "options_show_page_badge": {
+    "message": "Show page badge (display filtered ad count near video)"
+  },
+  "options_keep_discontinuity": {
+    "message": "Fill DISCONTINUITY on ad gaps (add marker after removing ad segments)"
+  },
+  "options_log_to_console": {
+    "message": "Console log (for debugging)"
+  },
+  "options_output_mode": {
+    "message": "Output Mode"
+  },
+  "options_mode_m3u8_file": {
+    "message": "m3u8 file (cleaned text)"
+  },
+  "options_mode_data_url": {
+    "message": "data: URL (inline base64)"
+  },
+  "options_mode_passthrough": {
+    "message": "Passthrough (detect only, no cleaning)"
+  },
+  "options_mode_disabled": {
+    "message": "Disabled"
+  },
+  "options_custom_rules_title": {
+    "message": "Custom Rules"
+  },
+  "options_url_patterns": {
+    "message": "URL Patterns (one regex per line)"
+  },
+  "options_remote_rules_url": {
+    "message": "Remote Rules URL"
+  },
+  "options_save_advanced_config": {
+    "message": "Save Advanced Config"
+  },
+  "options_saved": {
+    "message": "Saved"
+  },
+  "options_save_failed": {
+    "message": "Save failed"
+  },
+  "options_loading": {
+    "message": "Loading…"
+  },
+  "options_refresh": {
+    "message": "Refresh"
+  },
+  "options_delete": {
+    "message": "Delete"
+  },
   "notify_disconnected_title": {
     "message": "Velo is not running"
   },
@@ -117,5 +281,224 @@
   },
   "mse_detected_body": {
     "message": "This page uses MSE streaming; segment fingerprints have been recorded. See the in-page panel for downloads."
+  },
+  "options_test_input_title": {
+    "message": "Test Parameters"
+  },
+  "options_test_url_label": {
+    "message": "m3u8 URL"
+  },
+  "options_test_host_label": {
+    "message": "Simulated Page Host (optional)"
+  },
+  "options_test_run": {
+    "message": "Fetch & Detect"
+  },
+  "options_test_running": {
+    "message": "Detecting…"
+  },
+  "options_test_result_title": {
+    "message": "Detection Result"
+  },
+  "options_test_mode": {
+    "message": "Mode"
+  },
+  "options_test_matched_rule": {
+    "message": "Matched Rule"
+  },
+  "options_test_ad_segments": {
+    "message": "Ad Segments"
+  },
+  "options_test_ad_duration": {
+    "message": "Ad Duration"
+  },
+  "options_test_content_duration": {
+    "message": "Content Duration"
+  },
+  "options_test_segment_reasons": {
+    "message": "Segment Reasons"
+  },
+  "options_test_cleaned_m3u8": {
+    "message": "Cleaned m3u8"
+  },
+  "options_suggestions_title": {
+    "message": "Pending Suggestions"
+  },
+  "options_suggestion_approve": {
+    "message": "Approve"
+  },
+  "options_suggestion_dismiss": {
+    "message": "Dismiss"
+  },
+  "options_rules_list_title": {
+    "message": "Rules List"
+  },
+  "options_no_rules": {
+    "message": "No rules"
+  },
+  "options_rule_source_builtin": {
+    "message": "Built-in"
+  },
+  "options_rule_source_remote": {
+    "message": "Remote"
+  },
+  "options_rule_source_user": {
+    "message": "User"
+  },
+  "options_ad_patterns": {
+    "message": "Ad Patterns"
+  },
+  "options_stats_summary_title": {
+    "message": "Summary"
+  },
+  "options_stats_total_ads": {
+    "message": "Filtered Ads"
+  },
+  "options_stats_total_ad_duration": {
+    "message": "Total Ad Duration"
+  },
+  "options_stats_total_detections": {
+    "message": "Detections"
+  },
+  "options_stats_total_content_duration": {
+    "message": "Total Content Duration"
+  },
+  "options_no_stats": {
+    "message": "No stats"
+  },
+  "options_stats_top_hosts": {
+    "message": "Top Hosts"
+  },
+  "options_stats_host": {
+    "message": "Host"
+  },
+  "options_stats_ads": {
+    "message": "Ads"
+  },
+  "options_stats_ad_duration": {
+    "message": "Ad Duration"
+  },
+  "options_stats_top_rules": {
+    "message": "Top Rules"
+  },
+  "options_stats_rule": {
+    "message": "Rule"
+  },
+  "options_stats_hits": {
+    "message": "Hits"
+  },
+  "options_stats_recent_reports": {
+    "message": "Recent Reports"
+  },
+  "options_stats_time": {
+    "message": "Time"
+  },
+  "options_stats_ad_total": {
+    "message": "Ads/Total"
+  },
+  "options_confirm_clear_stats": {
+    "message": "Clear all statistics?"
+  },
+  "options_clear_stats": {
+    "message": "Clear Stats"
+  },
+  "options_samples_title": {
+    "message": "Ad Samples"
+  },
+  "options_capture_sample": {
+    "message": "Capture Current Page Ad Sample"
+  },
+  "options_no_samples": {
+    "message": "No samples"
+  },
+  "options_sample_host": {
+    "message": "Host"
+  },
+  "options_sample_time": {
+    "message": "Time"
+  },
+  "options_sample_window": {
+    "message": "Window"
+  },
+  "options_sample_timestamp": {
+    "message": "Captured"
+  },
+  "options_sample_actions": {
+    "message": "Actions"
+  },
+  "options_sample_captured": {
+    "message": "Sample captured"
+  },
+  "options_confirm_clear_samples": {
+    "message": "Clear all ad samples?"
+  },
+  "options_clear_all_samples": {
+    "message": "Clear All Samples"
+  },
+  "options_export_title": {
+    "message": "Export Data"
+  },
+  "options_export_desc": {
+    "message": "Select data categories to export:"
+  },
+  "options_export_button": {
+    "message": "Export Backup"
+  },
+  "options_data_user_rules": {
+    "message": "User Rules"
+  },
+  "options_data_suggestions": {
+    "message": "Pending Suggestions"
+  },
+  "options_data_full_config": {
+    "message": "Full Config"
+  },
+  "options_data_learned_fingerprints": {
+    "message": "Learned Fingerprints"
+  },
+  "options_data_ad_samples": {
+    "message": "Ad Samples"
+  },
+  "options_import_title": {
+    "message": "Import Data"
+  },
+  "options_import_desc": {
+    "message": "Select import strategy then choose a backup file:"
+  },
+  "options_strategy_merge": {
+    "message": "Merge (keep existing + append new data)"
+  },
+  "options_strategy_replace": {
+    "message": "Replace (clear existing + use backup data)"
+  },
+  "options_import_button": {
+    "message": "Import Backup"
+  },
+  "options_import_success": {
+    "message": "Import successful"
+  },
+  "options_import_failed": {
+    "message": "Import failed"
+  },
+  "options_privacy_title": {
+    "message": "Privacy Notice"
+  },
+  "options_privacy_scope": {
+    "message": "Data Collection: "
+  },
+  "options_privacy_scope_desc": {
+    "message": "The extension only sniffs media requests (URL, Content-Type, headers) when browsing video pages."
+  },
+  "options_privacy_storage": {
+    "message": "Data Storage: "
+  },
+  "options_privacy_storage_desc": {
+    "message": "All data is stored locally in chrome.storage.local and is never sent to any third-party server."
+  },
+  "options_privacy_headers": {
+    "message": "Header Forwarding: "
+  },
+  "options_privacy_headers_desc": {
+    "message": "Page request headers are automatically forwarded to the download client to ensure \"if you can see it, you can download it\". Make sure the download client address is trusted."
   }
 }

@@ -60,6 +60,34 @@ export async function sendToDownloadClient(
     requestHeaders?: Record<string, string> | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
+  if (pushClientInstance) {
+    try {
+      const headers = buildVeloHeaders(extra)
+      const msg = {
+        action: 'push_url' as const,
+        url,
+        m3u8_text: undefined as string | undefined,
+        base_url: undefined as string | undefined,
+        content_type: extra?.contentType,
+        content_disposition: extra?.contentDisposition,
+        method: extra?.method ?? 'GET',
+        post_data: extra?.requestBody,
+        headers,
+        options: {
+          filename: fileName,
+          output_dir: undefined as string | undefined,
+          merge_format: 'ts',
+          extra_headers: undefined as Record<string, string> | undefined,
+        },
+      }
+      await pushClientInstance.push(msg)
+      logger.info('[download] pushed via PushClient:', url.slice(0, 80))
+      return { success: true }
+    } catch (e) {
+      logger.warn('[download] PushClient push failed, falling back to config:', (e as Error).message)
+    }
+  }
+
   const cfg = await getDownloadConfig()
   try {
     switch (cfg.client) {
@@ -770,6 +798,10 @@ let pushClientInstance: ReturnType<typeof createPushClient> | null = null
 
 export function setPushClient(client: ReturnType<typeof createPushClient> | null): void {
   pushClientInstance = client
+}
+
+export function getPushClient(): ReturnType<typeof createPushClient> | null {
+  return pushClientInstance
 }
 
 /** 推送 HLS m3u8 到 velo 桌面端 */

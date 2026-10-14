@@ -140,7 +140,7 @@ export function setM3u8ProcessHandler(handler: M3u8ProcessHandler | null): void 
 let initialized = false
 let onBeforeRequestListener: ((details: chrome.webRequest.OnBeforeRequestDetails) => chrome.webRequest.BlockingResponse | undefined) | null = null
 let onBeforeSendHeadersListener: ((details: chrome.webRequest.OnBeforeSendHeadersDetails) => undefined) | null = null
-let onHeadersReceivedListener: ((details: chrome.webRequest.OnHeadersReceivedDetails) => chrome.webRequest.BlockingResponse | undefined) | null = null
+let onHeadersReceivedListener: ((details: chrome.webRequest.OnHeadersReceivedDetails) => undefined) | null = null
 
 export function startSniffer(): void {
   if (initialized) return
@@ -273,7 +273,7 @@ export function startSniffer(): void {
     ['requestHeaders'],
   )
 
-  onHeadersReceivedListener = (details: chrome.webRequest.OnHeadersReceivedDetails): chrome.webRequest.BlockingResponse | undefined => {
+  onHeadersReceivedListener = (details: chrome.webRequest.OnHeadersReceivedDetails): undefined => {
       const pending = pendingRequests.get(details.requestId)
       if (!pending) return undefined
 
@@ -449,9 +449,9 @@ export function startSniffer(): void {
         //   - m3u8: 不返回 redirectUrl（浏览器需读取 m3u8 内容以驱动 HLS 播放器）
         //   - Attachment / 强制下载 CT：返回 redirectUrl（用户主动下载意图）
         if (isWhitelistExt || isAttachment || isForceDownloadCT) {
-          logger.info('[sniffer] returning redirectUrl:"javascript:" to cancel browser download:', ext, pending.url.slice(0, 80))
+          logger.info('[sniffer] download-type detected, will cancel via downloads.onCreated:', ext, pending.url.slice(0, 80))
           pendingRequests.delete(details.requestId)
-          return { redirectUrl: 'javascript:' }
+          return undefined
         }
       } catch (e) {
         logger.warn('[sniffer] onHeadersReceived failed:', (e as Error).message)
@@ -461,9 +461,9 @@ export function startSniffer(): void {
       return undefined
     }
   chrome.webRequest.onHeadersReceived.addListener(
-    onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => chrome.webRequest.BlockingResponse | undefined,
+    onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => undefined,
     { urls: [...URL_FILTERS] },
-    ['responseHeaders', 'blocking'],
+    ['responseHeaders'],
   )
 
   chrome.webRequest.onCompleted.addListener(
@@ -574,7 +574,7 @@ export function stopSniffer(): void {
   }
   if (onHeadersReceivedListener) {
     chrome.webRequest.onHeadersReceived.removeListener(
-      onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => chrome.webRequest.BlockingResponse | undefined,
+      onHeadersReceivedListener as (details: chrome.webRequest.OnHeadersReceivedDetails) => undefined,
     )
     onHeadersReceivedListener = null
   }

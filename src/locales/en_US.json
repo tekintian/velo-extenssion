@@ -25,6 +25,63 @@
   "popup_settings_button": {
     "message": "Settings"
   },
+  "popup_port_label": {
+    "message": "Port"
+  },
+  "popup_token_label": {
+    "message": "Token (optional)"
+  },
+  "popup_token_placeholder": {
+    "message": "Leave empty if no token required"
+  },
+  "popup_token_required": {
+    "message": "This client requires a token to connect"
+  },
+  "popup_pair_success": {
+    "message": "Pairing successful"
+  },
+  "popup_pair_failed": {
+    "message": "Pairing failed, check port and token"
+  },
+  "popup_pair_error": {
+    "message": "Pairing error: $ERROR$",
+    "placeholders": {
+      "ERROR": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_clear_success": {
+    "message": "Pairing cleared"
+  },
+  "popup_clear_error": {
+    "message": "Clear pairing error: $ERROR$",
+    "placeholders": {
+      "ERROR": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_comm_error": {
+    "message": "Communication error"
+  },
+  "popup_probing": {
+    "message": "Probing client..."
+  },
+  "popup_auto_connect_button": {
+    "message": "Auto Connect"
+  },
+  "popup_auto_connected": {
+    "message": "Auto-connected (port $PORT$)",
+    "placeholders": {
+      "PORT": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_client_not_found": {
+    "message": "Velo client not detected, please make sure it is running"
+  },
   "options_title": {
     "message": "Velo Extension Settings"
   },
