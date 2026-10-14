@@ -63,9 +63,9 @@ export async function sendToDownloadClient(
   if (pushClientInstance) {
     try {
       const headers = buildVeloHeaders(extra)
-      const isM3u8 = extra?.contentType?.includes('mpegurl') || url.includes('.m3u8')
+      const isM3u8 = isHlsMedia(url, extra?.contentType)
       const msg = {
-        action: 'push_url' as const,
+        action: (isM3u8 ? 'push_url' : 'push_normal') as 'push_url' | 'push_normal',
         url,
         m3u8_text: undefined as string | undefined,
         base_url: undefined as string | undefined,
@@ -894,10 +894,10 @@ export async function pushUrl(
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
   }
-  const isM3u8 = descriptor.contentType?.includes('mpegurl') || descriptor.ext === '.m3u8'
+  const isM3u8 = isHlsMedia(url, descriptor.contentType)
   const fileName = buildFileName(descriptor)
   const msg = {
-    action: 'push_url' as const,
+    action: (isM3u8 ? 'push_url' : 'push_normal') as 'push_url' | 'push_normal',
     url,
     m3u8_text: undefined as string | undefined,
     base_url: undefined as string | undefined,

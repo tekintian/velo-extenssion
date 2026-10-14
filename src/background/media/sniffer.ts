@@ -87,6 +87,19 @@ const URL_FILTERS = [
 /** 强制下载的 Content-Type（不通过扩展名也能识别为下载） */
 const FORCE_DOWNLOAD_CT_RE = /^(?:application\/x-apple-diskimage|application\/download|application\/force-download|application\/x-mveloload|binary\/octet-stream)$/i
 
+/**
+ * 页面类 Content-Type — 表示服务端返回的是 HTML/文本页面，不是真实文件下载
+ *
+ * 当 CT 命中此正则且无 Content-Disposition: attachment 时，即使 URL 扩展名在
+ * 白名单中（如 .rar/.zip），也应跳过嗅探——这是"伪下载 URL"场景：
+ * URL 路径带文件扩展名但实际返回 HTML 引导页（如 megaup.net、mediafire 等），
+ * 真实下载链接嵌在页面内需用户点击。
+ *
+ * 不含 application/octet-stream：该 CT 虽然通用但确实表示二进制下载，
+ * 且很多 CDN/对象存储对真实文件返回 octet-stream。
+ */
+const PAGE_CONTENT_TYPE_RE = /^(?:text\/html|text\/x-html|application\/xhtml\+xml|text\/xml|application\/xml|text\/plain(?:;\s*charset=utf-8)?)$/i
+
 /** per-tab 媒体列表 */
 const tabMediaMap = new Map<number, MediaItem[]>()
 
@@ -361,6 +374,20 @@ export function startSniffer(): void {
         // 旧实现只判断 'ts' 单一字符串，遗漏 F4F/MPEGTS/MP2T。
         const isHlsSegment = ext && HLS_STREAMING_EXT_RE.test(ext)
         const isWhitelistExt = ext && isNonMediaDownloadExt(ext)
+
+        // === CT 矛盾过滤：伪下载 URL 防御 ===
+        // URL 路径带文件扩展名（如 .rar/.zip）但服务端返回 text/html 等页面类型，
+        // 且无 Content-Disposition: attachment → 这是 HTML 引导页，不是真实文件下载。
+        // 典型场景：megaup.net/mediafire 等网盘的引导页 URL 带目标文件扩展名，
+        // 但实际返回 HTML 页面，真实下载链接嵌在页面内需用户点击。
+        // 不过滤 isAttachment=true 的情况：CD:attachment 是服务端明确表示"这是下载"的信号，
+        // 即使 CT 是 text/html 也可能是动态生成的下载页（如 PHP 输出文件流但 CT 写错）。
+        const isPageContentType = PAGE_CONTENT_TYPE_RE.test(contentType)
+        if (isPageContentType && !isAttachment && isWhitelistExt) {
+          logger.info('[sniffer] CT contradiction: URL ext=', ext, 'but CT=', contentType.split(';')[0], '— skipping (HTML landing page, not real download):', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
 
         const sniffable =
           !isHlsSegment &&
