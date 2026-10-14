@@ -31,9 +31,17 @@ function SamplesPage() {
   const handleCapture = async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id) return
-      await chrome.tabs.sendMessage(tab.id, { type: 'captureAdSample' })
-      alert(i18n('options_sample_captured'))
+      if (!tab?.id) throw new Error('未找到活动标签页')
+      // 1. 从 content script 获取当前播放时间（对齐 NDM popup.js ndm-get-playback）
+      const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' })
+      if (!pb?.ok) throw new Error('读取播放状态失败: ' + (pb?.error || '?'))
+      // 2. 发送给 background 捕获样本 + auto-learn（对齐 NDM popup.js ndm-capture-sample）
+      const result = await chrome.runtime.sendMessage({
+        type: 'captureSample',
+        payload: { tabId: tab.id, currentTime: pb.currentTime },
+      })
+      if (!result?.success) throw new Error('捕获失败: ' + (result?.message || result?.error || '?'))
+      alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime)}s)`)
       void loadSamples()
     } catch (e) { alert(String(e)) }
   }

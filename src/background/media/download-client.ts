@@ -63,6 +63,7 @@ export async function sendToDownloadClient(
   if (pushClientInstance) {
     try {
       const headers = buildVeloHeaders(extra)
+      const isM3u8 = extra?.contentType?.includes('mpegurl') || url.includes('.m3u8')
       const msg = {
         action: 'push_url' as const,
         url,
@@ -76,7 +77,7 @@ export async function sendToDownloadClient(
         options: {
           filename: fileName,
           output_dir: undefined as string | undefined,
-          merge_format: 'ts',
+          merge_format: isM3u8 ? 'ts' : '',
           extra_headers: undefined as Record<string, string> | undefined,
         },
       }
@@ -544,6 +545,32 @@ export async function sendToVeloM3u8(
 }
 
 /** 构建认证头集合（导出供测试用） */
+/**
+ * 从 MediaDescriptor 构建文件名（对齐 NDM bg.js V.V 中 b.fileName 构建逻辑）
+ *
+ * 优先级：Content-Disposition filename > URL 路径最后一段 > ext 回退
+ * 去掉查询参数，保留扩展名
+ */
+function buildFileName(descriptor: MediaDescriptor): string {
+  // 1. 从 Content-Disposition 提取 filename
+  if (descriptor.contentDisposition) {
+    const match = descriptor.contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+    if (match?.[1]) {
+      const name = match[1].replace(/['"]/g, '').trim()
+      if (name) return name
+    }
+  }
+  // 2. 从 URL 路径提取
+  try {
+    const pathname = new URL(descriptor.url).pathname
+    const lastSegment = pathname.split('/').pop()?.split('?')[0]?.trim()
+    if (lastSegment && lastSegment.includes('.')) return lastSegment
+  } catch { /* ignore */ }
+  // 3. 用 ext 回退
+  if (descriptor.ext) return `download${descriptor.ext}`
+  return ''
+}
+
 export function buildVeloHeaders(extra?: {
   pageUrl?: string | undefined
   cookies?: string | undefined
@@ -804,6 +831,29 @@ export function getPushClient(): ReturnType<typeof createPushClient> | null {
   return pushClientInstance
 }
 
+/**
+ * 同步下载配置缓存（移植自 NDM bg.js _dlConfig）
+ *
+ * NDM 行 24-33: `var _dlConfig = { client: 'ndm', ... }` 同步读，避免每次下载都 await storage
+ * 初始化时从 storage 加载，storage.onChanged 时实时更新
+ *
+ * 用途：onHeadersReceived 等同步回调中需要判断客户端类型，
+ * 无法 await getDownloadConfig()，改用此同步缓存
+ */
+let _cachedConfig: DownloadClientConfig = { ...DEFAULT_DOWNLOAD_CONFIG }
+
+export function getCachedDownloadConfig(): DownloadClientConfig {
+  return _cachedConfig
+}
+
+export async function initCachedDownloadConfig(): Promise<void> {
+  _cachedConfig = await getDownloadConfig()
+}
+
+export function updateCachedDownloadConfig(cfg: DownloadClientConfig): void {
+  _cachedConfig = cfg
+}
+
 /** 推送 HLS m3u8 到 velo 桌面端 */
 export async function pushHls(
   descriptor: MediaDescriptor,
@@ -814,16 +864,18 @@ export async function pushHls(
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
   }
+  const fileName = buildFileName(descriptor)
   const msg = {
     action: 'push_m3u8' as const,
     m3u8_text: m3u8Text,
     url: undefined as string | undefined,
     base_url: descriptor.url,
-    // P0 修复：传递认证头（Cookie/Referer/Origin/UA/Authorization 等）
-    // 旧实现 headers: undefined 导致桌面端下载分片 403
+    content_type: descriptor.contentType || 'application/vnd.apple.mpegurl',
+    content_disposition: descriptor.contentDisposition || undefined,
+    method: descriptor.method || 'GET',
     headers: buildVeloHeaders(extra),
     options: {
-      filename: undefined as string | undefined,
+      filename: fileName || undefined,
       output_dir: undefined as string | undefined,
       merge_format: options?.mergeFormat ?? 'ts',
       extra_headers: undefined as Record<string, string> | undefined,
@@ -835,23 +887,28 @@ export async function pushHls(
 /** 推送 URL 到 velo 桌面端 */
 export async function pushUrl(
   url: string,
-  _descriptor: MediaDescriptor,
+  descriptor: MediaDescriptor,
   options?: { mergeFormat?: string },
   extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string> },
 ): Promise<void> {
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
   }
+  const isM3u8 = descriptor.contentType?.includes('mpegurl') || descriptor.ext === '.m3u8'
+  const fileName = buildFileName(descriptor)
   const msg = {
     action: 'push_url' as const,
     url,
     m3u8_text: undefined as string | undefined,
     base_url: undefined as string | undefined,
+    content_type: descriptor.contentType || undefined,
+    content_disposition: descriptor.contentDisposition || undefined,
+    method: descriptor.method || 'GET',
     headers: buildVeloHeaders(extra),
     options: {
-      filename: undefined as string | undefined,
+      filename: fileName || undefined,
       output_dir: undefined as string | undefined,
-      merge_format: options?.mergeFormat ?? 'ts',
+      merge_format: isM3u8 ? (options?.mergeFormat ?? 'ts') : '',
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
@@ -866,16 +923,21 @@ export async function pushNormal(
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
   }
+  const isM3u8 = descriptor.contentType?.includes('mpegurl') || descriptor.ext === '.m3u8'
+  const fileName = buildFileName(descriptor)
   const msg = {
     action: 'push_normal' as const,
     url: descriptor.url,
     m3u8_text: undefined as string | undefined,
     base_url: undefined as string | undefined,
+    content_type: descriptor.contentType || undefined,
+    content_disposition: descriptor.contentDisposition || undefined,
+    method: descriptor.method || 'GET',
     headers: buildVeloHeaders(extra),
     options: {
-      filename: undefined as string | undefined,
+      filename: fileName || undefined,
       output_dir: undefined as string | undefined,
-      merge_format: 'ts',
+      merge_format: isM3u8 ? 'ts' : '',
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }

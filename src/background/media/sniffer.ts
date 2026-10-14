@@ -34,6 +34,7 @@ import { extFromContentType, mimeFromExt } from './mime-table'
 import { isNonMediaDownloadExt } from './download-whitelist'
 import { parseRequestBody } from './post-body-parser'
 import { getDeleteKeyDown } from './delete-key-state'
+import { sendToDownloadClient, getPushClient, getCachedDownloadConfig } from './download-client'
 
 /** NDM 的 B 正则：媒体扩展名（嗅探所有音视频，但 .ts 分片除外 — 太多无意义） */
 const MEDIA_EXT_RE = /^(?:FLV|SWF|MP3|MP4|M4V|F4F|F4V|M4A|M4S|MPG|MPEG|MPEG4|MPE|AVI|WMV|WMA|WAV|WAVE|ASF|RM|RAM|OGG|OGV|OGM|OGA|MOV|MID|MIDI|3GP|3GPP|QT|WEBM|TS|MKV|AAC|MP2T|MPEGTS|RMVB|VTT|SRT|M3U8|M3U)$/i
@@ -88,6 +89,20 @@ const FORCE_DOWNLOAD_CT_RE = /^(?:application\/x-apple-diskimage|application\/do
 
 /** per-tab 媒体列表 */
 const tabMediaMap = new Map<number, MediaItem[]>()
+
+/**
+ * 最近自动推送的非媒体下载 URL（移植自 NDM bg.js this.u）
+ *
+ * NDM V.V: 非媒体下载命中时设置 this.u = b["2"]（URL），然后推送 WebSocket
+ * NDM V.X: downloads.onCreated 中若 URL 匹配 this.u 则 cancel + erase
+ *
+ * velo 用途：onHeadersReceived 检测到非媒体下载（白名单/attachment/force-download）
+ * 时设置此变量，downloads.onCreated 中匹配则取消浏览器下载条目
+ *
+ * 使用 Set 存储最近推送的 URL 集合（含重定向链），避免重定向前后 URL 不匹配导致取消失败
+ */
+const pushedUrlSet = new Set<string>()
+let lastPushedUrl = ''
 
 /** 最大保留数 */
 const MAX_PER_TAB = 100
@@ -414,6 +429,65 @@ export function startSniffer(): void {
           return undefined
         }
 
+        // === 非媒体下载自动推送（移植自 NDM bg.js V.V else 分支 + V.I WebSocket 推送） ===
+        // NDM 行为：非媒体下载（白名单 ext / attachment / force-download CT）命中时：
+        //   1. 设置 this.u = URL（供 V.X downloads.onCreated 匹配取消）
+        //   2. 调用 this.I(v) 通过 WebSocket 推送到 NDM 客户端
+        //   3. 不调用 this.A()（不显示角标/面板）
+        //
+        // velo 行为（与 NDM 一致）：
+        //   - 非媒体下载不调用 addMediaItem（不显示角标，无实际意义）
+        //   - 自动推送到下载客户端（PushClient 优先 → 配置的 aria2/ndm/velo）
+        //   - 设置 lastPushedUrl 供 downloads.onCreated 匹配取消浏览器下载
+        //   - 无可用客户端时让浏览器原生下载正常进行
+        if (isWhitelistExt || isAttachment || isForceDownloadCT) {
+          // 去重：同一 URL 已推送过，跳过（防止 onBeforeRequest 重定向后二次触发）
+          if (pushedUrlSet.has(pending.url)) {
+            logger.debug('[sniffer] non-media download already pushed, skipping:', ext, pending.url.slice(0, 80))
+            pendingRequests.delete(details.requestId)
+            return undefined
+          }
+          const hasPushClient = !!getPushClient()
+          const cfg = getCachedDownloadConfig()
+          const hasViableClient = hasPushClient || cfg.client !== 'native'
+
+          if (hasViableClient) {
+            lastPushedUrl = pending.url
+            pushedUrlSet.add(pending.url)
+            pushedUrlSet.add(details.url)
+            logger.info('[sniffer] non-media download, auto-pushing to client:', ext, pending.url.slice(0, 80), 'client:', hasPushClient ? 'pushClient' : cfg.client)
+            void sendToDownloadClient(
+              pending.url,
+              fileNameFromCD || urlFileName,
+              {
+                contentType: contentType.split(';')[0]!.trim(),
+                contentDisposition,
+                method: pending.method,
+                requestBody: pending.requestBody,
+                requestHeaders: pending.requestHeaders,
+              },
+            ).then((result) => {
+              if (!result.success) {
+                lastPushedUrl = ''
+                pushedUrlSet.delete(pending.url)
+                pushedUrlSet.delete(details.url)
+                logger.warn('[sniffer] auto-push failed, clearing lastPushedUrl:', result.message, 'url:', pending.url.slice(0, 80))
+              }
+            }).catch((e) => {
+              lastPushedUrl = ''
+              pushedUrlSet.delete(pending.url)
+              pushedUrlSet.delete(details.url)
+              logger.warn('[sniffer] auto-push error, clearing lastPushedUrl:', (e as Error).message, 'url:', pending.url.slice(0, 80))
+            })
+          } else {
+            logger.info('[sniffer] non-media download, no client available, letting browser handle:', ext, pending.url.slice(0, 80))
+          }
+
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        // === 媒体下载：显示角标/面板，用户手动选择下载 ===
         const item: MediaItem = {
           id: details.requestId,
           url: pending.url,
@@ -439,19 +513,6 @@ export function startSniffer(): void {
           } else {
             void processM3u8InBackground(pending.url, pending.tabId, pending.requestHeaders)
           }
-        }
-
-        // === NDM bg.js 返回 {redirectUrl:"javascript:"} 取消浏览器原生下载 ===
-        // NDM 行 219-227: 非媒体下载白名单（ca）命中时，推送到下载客户端后返回 redirectUrl
-        //   使浏览器不创建下载条目（避免 chrome.downloads.onCreated 的闪现问题）
-        //   - 媒体扩展名（H 正则）：不返回 redirectUrl，让浏览器继续播放视频流
-        //   - 非媒体白名单（ca）：返回 redirectUrl，取消下载（用户明确要下载，不需浏览器下）
-        //   - m3u8: 不返回 redirectUrl（浏览器需读取 m3u8 内容以驱动 HLS 播放器）
-        //   - Attachment / 强制下载 CT：返回 redirectUrl（用户主动下载意图）
-        if (isWhitelistExt || isAttachment || isForceDownloadCT) {
-          logger.info('[sniffer] download-type detected, will cancel via downloads.onCreated:', ext, pending.url.slice(0, 80))
-          pendingRequests.delete(details.requestId)
-          return undefined
         }
       } catch (e) {
         logger.warn('[sniffer] onHeadersReceived failed:', (e as Error).message)
@@ -506,13 +567,31 @@ export function startSniffer(): void {
     }
   })
 
-  // downloads.onCreated — 拦截浏览器原生下载，如果 URL 匹配嗅探到的媒体 (移植自 NDM bg.js V.X)
+  // downloads.onCreated — 拦截浏览器原生下载（移植自 NDM bg.js V.X）
+  // 两种匹配方式：
+  //   1. URL 匹配 tabMediaMap 中的媒体项（用户在面板中点击下载的媒体）
+  //   2. URL 匹配 lastPushedUrl（非媒体下载已自动推送到客户端，需取消浏览器下载）
+  //
+  // NDM V.X: `this.u != a.finalUrl && this.u != a.url ? this.u = "" : (this.u = "", cancel, erase)`
   chrome.downloads.onCreated.addListener((item) => {
     if (!item.url) return
-    // 检查是否是嗅探到的媒体 URL（匹配所有 tab 的 media items）
+
+    // 匹配 pushedUrlSet：非媒体下载已自动推送，取消浏览器下载条目
+    // 使用 Set 匹配重定向链中任意 URL（对齐 NDM V.X this.u 匹配逻辑）
+    if (pushedUrlSet.has(item.url) || pushedUrlSet.has(item.finalUrl || '') || (lastPushedUrl && (lastPushedUrl === item.url || lastPushedUrl === item.finalUrl))) {
+      logger.info('[sniffer] downloads.onCreated: matching pushed URL, canceling browser download:', item.url.slice(0, 80))
+      pushedUrlSet.delete(item.url)
+      if (item.finalUrl) pushedUrlSet.delete(item.finalUrl)
+      lastPushedUrl = ''
+      chrome.downloads.cancel(item.id, () => {
+        chrome.downloads.erase({ id: item.id })
+      })
+      return
+    }
+
+    // 匹配 tabMediaMap：媒体项已推送到客户端，取消浏览器下载
     for (const [, items] of tabMediaMap) {
       if (items.some((m) => m.url === item.url || m.url === item.finalUrl)) {
-        // 取消浏览器下载（让 NDM/Motrix 处理）
         chrome.downloads.cancel(item.id, () => {
           chrome.downloads.erase({ id: item.id })
         })
@@ -897,21 +976,53 @@ function handleFtpOrFileRequest(
     const fileName = extractFileNameFromPath(urlPath)
     const ext = getExt(fileName)
 
-    // 无扩展名的 URL（如 FTP 目录）不推送
     if (!ext) {
       logger.debug('[sniffer]', protocol, 'URL has no ext, skip:', details.url.slice(0, 100))
       return
     }
 
-    // 仅推送媒体扩展名 或 非媒体下载白名单扩展名
     if (!MEDIA_EXT_RE.test(ext) && !isNonMediaDownloadExt(ext)) {
       logger.debug('[sniffer]', protocol, 'URL ext not in whitelist, skip:', ext)
       return
     }
 
-    // 若有 MIME 反查（如 .pdf → application/pdf），添加到 contentType
     const contentType = mimeFromExt(ext)
     const tabId = details.tabId
+    const isNonMedia = isNonMediaDownloadExt(ext)
+
+    if (isNonMedia) {
+      if (pushedUrlSet.has(details.url)) {
+        logger.debug('[sniffer]', protocol, 'non-media download already pushed, skipping:', ext, details.url.slice(0, 80))
+        return
+      }
+      const hasPushClient = !!getPushClient()
+      const cfg = getCachedDownloadConfig()
+      const hasViableClient = hasPushClient || cfg.client !== 'native'
+
+      if (hasViableClient) {
+        lastPushedUrl = details.url
+        pushedUrlSet.add(details.url)
+        logger.info('[sniffer]', protocol, 'non-media download, auto-pushing to client:', ext, details.url.slice(0, 80))
+        void sendToDownloadClient(
+          details.url,
+          fileName,
+          { contentType: contentType || undefined },
+        ).then((result) => {
+          if (!result.success) {
+            lastPushedUrl = ''
+            pushedUrlSet.delete(details.url)
+            logger.warn('[sniffer]', protocol, 'auto-push failed, clearing lastPushedUrl:', result.message)
+          }
+        }).catch((e) => {
+          lastPushedUrl = ''
+          pushedUrlSet.delete(details.url)
+          logger.warn('[sniffer]', protocol, 'auto-push error, clearing lastPushedUrl:', (e as Error).message)
+        })
+      } else {
+        logger.info('[sniffer]', protocol, 'non-media download, no client, letting browser handle:', ext, details.url.slice(0, 80))
+      }
+      return
+    }
 
     addMediaItemExternal(tabId, details.url, fileName, ext.toLowerCase(), {
       contentType: contentType || undefined,

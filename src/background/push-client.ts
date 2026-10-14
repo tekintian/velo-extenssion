@@ -126,7 +126,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       if (!ws || ws.readyState !== WebSocket.OPEN) return
       // 发 ping（桌面端回任意消息即视为 pong）
       try {
-        ws.send(JSON.stringify({ action: 'ping' }))
+        ws.send(JSON.stringify({ action: 'ping', version: PROTOCOL_VERSION, token }))
         awaitingPong = true
         // 10s 无响应则主动 close，触发 onclose → 重连
         pongTimer = setTimeout(() => {
@@ -447,7 +447,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       token,
       action: (message.action as PushMessage['action']) ?? 'push_normal',
       options: {
-        merge_format: 'ts',
+        merge_format: '',
         ...(message.options as Record<string, unknown>),
       },
     } as PushMessage

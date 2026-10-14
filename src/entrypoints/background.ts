@@ -5,14 +5,16 @@ import { initMessageRouter, registerHandler } from '@/background/messaging/route
 import { PairingManager, type ProbeResult } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
 import { startSniffer, setM3u8ProcessHandler, getMediaItems } from '@/background/media/sniffer'
-import { setPushClient, pushHls, pushUrl, pushNormal } from '@/background/media/download-client'
+import { setPushClient, pushHls, pushUrl, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig } from '@/background/media/download-client'
+import type { DownloadClientConfig } from '@/background/media/types'
 import { registerMediaHandlers } from '@/background/media/handler'
 import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
 import { registerHlsHandlers } from '@/background/hls/handler'
 import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type VeloConfig } from '@/types'
-import { configStore } from '@/lib/storage'
+import { configStore, persistentStorage } from '@/lib/storage'
 import type { MediaDescriptor } from '@/types'
+import { extractBaseName } from '@/lib/naming'
 
 export default defineBackground({
   type: 'module',
@@ -241,6 +243,14 @@ async function initBackground(): Promise<void> {
   const stored = await configStore.get<VeloConfig>()
   config = { ...DEFAULT_SDOWN_CONFIG, ...stored }
 
+  await initCachedDownloadConfig()
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.downloadClientConfig?.newValue) {
+      updateCachedDownloadConfig(changes.downloadClientConfig.newValue as DownloadClientConfig)
+    }
+  })
+
   // P3-1: SW 重启后远程规则内存缓存丢失，从 storage 恢复
   // 否则要等下次 refreshRemoteRules 才能恢复，期间远程规则不生效
   await loadRemoteCacheFromStorage().catch((e) => {
@@ -296,6 +306,18 @@ async function tryAutoConnect(): Promise<ProbeResult & { connected?: boolean }> 
   return { ...result, connected: false }
 }
 
+/**
+ * 统一 m3u8 处理入口（移植自 NDM bg.js X.i + V.V m3u8 分支）
+ *
+ * 对齐 NDM 行为：
+ *   1. fetch m3u8 文本 → processPlaylist 广告检测+清洗
+ *   2. 广播 hlsFilterReport 给 badge content script（显示角标统计）
+ *   3. 广播 hlsFilterResult 给 badge content script（显示下载按钮 + AdSkipper）
+ *   4. 持久化 cleaned context 到 storage（供下载按钮用）
+ *   5. autoPush 时推送到桌面端下载客户端
+ *
+ * 旧实现仅做推送，不广播给 badge，导致角标不显示、AdSkipper 不工作、广告跳过无效。
+ */
 async function veloProcessM3u8(
   m3u8Url: string,
   tabId: number,
@@ -357,7 +379,7 @@ async function veloProcessM3u8(
 
     let hlsAuthHeaders: Record<string, string> | undefined
     try {
-      const items = getMediaItems(0)
+      const items = getMediaItems(tabId)
       const m3u8Item = items.find((i) => i.ext === 'm3u8' || i.ext === 'm3u')
       if (m3u8Item?.requestHeaders && Object.keys(m3u8Item.requestHeaders).length > 0) {
         hlsAuthHeaders = m3u8Item.requestHeaders
@@ -366,9 +388,69 @@ async function veloProcessM3u8(
 
     const result = await processPlaylist(text, m3u8Url, m3u8Url, cfg, hlsAuthHeaders)
 
+    // === 广播 hlsFilterReport 给 badge（对齐 NDM bg.js 行 504-510：广播 [16, report]） ===
+    if (result.report && tabId > 0) {
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'hlsFilterReport',
+          report: result.report,
+        })
+      } catch {
+        // badge 未注入 — 忽略
+      }
+    }
+
+    // === 持久化 cleaned context + 广播 hlsFilterResult 给 badge（对齐 NDM bg.js 行 543-558） ===
+    // NDM：存 _lastCleaned[tabId]，广播 [18] 给 ct 显示"下载"按钮 + AdSkipper
+    if ('cleaned' in result && typeof result.cleaned === 'string' && tabId > 0) {
+      const baseName = extractBaseName(m3u8Url)
+      const adRanges = 'adRanges' in result ? result.adRanges : []
+      let pageTitle = ''
+      try {
+        const tab = await chrome.tabs.get(tabId)
+        pageTitle = tab?.title?.trim() || ''
+      } catch { /* ignore */ }
+
+      // 持久化 cleaned context（供下载按钮用，对齐 NDM _lastCleaned + _persistCtx）
+      try {
+        const ctx = {
+          cleaned: result.cleaned,
+          baseName,
+          pageTitle,
+          report: result.report,
+          segments: 'segments' in result ? result.segments : [],
+          reasons: 'reasons' in result ? result.reasons : {},
+          pageHost,
+          baseUrl: m3u8Url,
+          detectedAt: Date.now(),
+        }
+        const CLEANED_KEY = 'hlsLastCleaned'
+        const all = (await persistentStorage.get<Record<string, typeof ctx>>(CLEANED_KEY)) ?? {}
+        all[String(tabId)] = ctx
+        await persistentStorage.set(CLEANED_KEY, all)
+      } catch (e) {
+        logger.warn('[velo] persist cleaned context failed:', (e as Error).message)
+      }
+
+      // 广播 hlsFilterResult 给 badge（显示下载按钮 + AdSkipper）
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'hlsFilterResult',
+          adRanges,
+          baseName,
+          pageTitle,
+          report: result.report,
+        })
+        logger.info('[velo] hlsFilterResult broadcasted:', adRanges?.length ?? 0, 'ad ranges, baseName:', baseName)
+      } catch {
+        // badge 未注入 — 忽略
+      }
+    }
+
+    // === 推送到桌面端下载客户端（autoPush 控制，对齐 NDM V.I WebSocket 推送） ===
     const descriptor: MediaDescriptor = {
       url: m3u8Url,
-      pageUrl,  // P0-4: 用真实观看页 URL
+      pageUrl,
       method: 'GET',
       ext: '.m3u8',
       mime: 'application/vnd.apple.mpegurl',
@@ -378,8 +460,6 @@ async function veloProcessM3u8(
       headers: sniffedHeaders ?? {},
     }
 
-    // P0 修复：推送时携带完整认证信息（Cookie/Referer/Origin/UA/Authorization）
-    // P0-4: pageUrl 用真实观看页 URL（chrome.tabs.get），跨域 CDN 场景下 Origin/Referer 正确
     const pushExtra: { pageUrl: string; cookies?: string; requestHeaders?: Record<string, string> } = {
       pageUrl,
     }
