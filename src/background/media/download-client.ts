@@ -395,6 +395,11 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
       b += 'Content-Length: 0\r\n'
     }
   } else {
+    // === NDM V.I: 非 POST + nowaiting 时也推送 7:(contentLength) + 8:(contentType) ===
+    // NDM: "POST"!=a["1"] && this.C && (b+="8:"+a["8"]+"\r\n", b+="7:"+a["7"]+"\r\n")
+    // velo 始终推送（无 waiting 协议，始终 nowaiting），让桌面端拿到完整元数据
+    if (contentType) b += `8:${contentType}\r\n`
+    if (contentLength) b += `7:${contentLength}\r\n`
     b += 'Content-Length: 0\r\n'
   }
 
