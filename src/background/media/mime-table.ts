@@ -21,6 +21,7 @@
  */
 export const MIME_TO_EXTS: Readonly<Record<string, string>> = {
   'application/x-apple-diskimage': 'DMG',
+  'application/cert-chain+cbor': 'MSG',
   'application/epub+zip': 'EPUB',
   'application/java-archive': 'JAR',
   'video/x-matroska': 'MKV',

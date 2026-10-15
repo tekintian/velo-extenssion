@@ -58,6 +58,9 @@ export async function sendToDownloadClient(
     cookies?: string | undefined
     requestBody?: string | undefined
     requestHeaders?: Record<string, string> | undefined
+    title?: string | undefined
+    contentLength?: string | undefined
+    priority?: string | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
   if (pushClientInstance) {
@@ -75,7 +78,7 @@ export async function sendToDownloadClient(
         post_data: extra?.requestBody,
         headers,
         options: {
-          filename: fileName,
+          filename: fileName || extra?.title,
           output_dir: undefined as string | undefined,
           merge_format: isM3u8 ? 'ts' : '',
           extra_headers: undefined as Record<string, string> | undefined,
@@ -131,7 +134,13 @@ export async function sendToAria2(
     pageUrl?: string | undefined
     cookies?: string | undefined
     contentType?: string | undefined
+    contentDisposition?: string | undefined
+    method?: string | undefined
+    requestBody?: string | undefined
     requestHeaders?: Record<string, string> | undefined
+    title?: string | undefined
+    contentLength?: string | undefined
+    priority?: string | undefined
   },
   /** 跳过 m3u8 → velo push 分流（内部 data URL 落地后已是 file:// m3u8，无需再分流） */
   skipVeloRedirect?: boolean,
@@ -184,7 +193,11 @@ export async function sendToAria2(
   }
   if (extra?.requestHeaders) {
     for (const [name, value] of Object.entries(extra.requestHeaders)) {
-      headers.push(`${name}: ${value}`)
+      // 过滤请求体相关头（这些是 POST body 的元数据，不应作为下载请求头透传）
+      const lower = name.toLowerCase()
+      if (lower !== 'content-type' && lower !== 'content-length' && lower !== 'content-disposition') {
+        headers.push(`${name}: ${value}`)
+      }
     }
   }
   if (headers.length > 0) {
@@ -289,7 +302,7 @@ let ndmWsReady = false
 export async function sendToNdm(
   url: string,
   fileName: string | undefined,
-  extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined },
+  extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined },
 ): Promise<{ success: boolean; message?: string }> {
   return new Promise((resolve) => {
     try {
@@ -327,7 +340,7 @@ export async function sendToNdm(
   })
 }
 
-function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined, extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined }): void {
+function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined, extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined }): void {
   // NDM WebSocket 协议（多行键值，移植自 bg.js V.I）:
   const method = extra?.method || 'GET'
   const pageUrl = extra?.pageUrl || ''
@@ -336,11 +349,16 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
   const cookies = extra?.cookies || ''
   const requestBody = extra?.requestBody
   const requestHeaders = extra?.requestHeaders
+  const contentLength = extra?.contentLength
+  const priority = extra?.priority || 'normal'
 
   let b = `1:${method}\r\n`
   b += `2:${url}\r\n`
-  b += `6:normal\r\n`
+  // === NDM V.I: 6: priority (normal/media/hls) ===
+  b += `6:${priority}\r\n`
   if (fileName) b += `4:${fileName}\r\n`
+  // === NDM V.I: 5: pageUrl ===
+  if (pageUrl) b += `5:${pageUrl}\r\n`
   if (pageUrl) {
     let c = pageUrl.trim()
     if (c) {
@@ -357,14 +375,20 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
   } else if (fileName) {
     b += `Content-Disposition: attachment; filename="${fileName}"\r\n`
   }
-  // x-* 自定义头 (移植自 NDM bg.js V.I: for (e in a) N(e.toLowerCase(),"x-") && ...)
+  // === NDM V.I: x-* 自定义头（只推送 x- 开头的头） ===
+  // NDM: for (e in a) N(e.toLowerCase(),"x-") && (b += e + ": " + a[e] + "\r\n")
   if (requestHeaders) {
     for (const [name, value] of Object.entries(requestHeaders)) {
-      b += `${name}: ${value}\r\n`
+      if (name.toLowerCase().startsWith('x-')) {
+        b += `${name}: ${value}\r\n`
+      }
     }
   }
   // POST body (移植自 NDM bg.js V.I: a.postData ? "__0NeatPostData9__:" + a.postData : "Content-Length: 0\r\n")
+  // === NDM V.I: POST 时推送 7:(contentLength) + 8:(contentType) ===
   if (method === 'POST') {
+    if (contentLength) b += `7:${contentLength}\r\n`
+    if (contentType) b += `8:${contentType}\r\n`
     if (requestBody) {
       b += `__0NeatPostData9__:${requestBody}\r\n`
     } else {
@@ -372,6 +396,13 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
     }
   } else {
     b += 'Content-Length: 0\r\n'
+  }
+
+  // === NDM bg.js V.I: payload 大小限制 ===
+  // NDM: `!(118784 < b.length)` — 超过 ~116KB 不发送（防止超大 POST body 导致 WS 帧过大）
+  if (b.length > 118784) {
+    logger.warn('[download] NDM payload too large (' + b.length + ' bytes), skipping send — url:', url.slice(0, 80))
+    return
   }
 
   logger.info('[download] NDM payload:\n', b)
@@ -426,6 +457,9 @@ export async function sendToVelo(
     requestBody?: string | undefined
     cookies?: string | undefined
     requestHeaders?: Record<string, string> | undefined
+    title?: string | undefined
+    contentLength?: string | undefined
+    priority?: string | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
   // === HEAD 预检（task 6） ===
@@ -591,7 +625,10 @@ export function buildVeloHeaders(extra?: {
   }
   if (extra?.requestHeaders) {
     for (const [name, value] of Object.entries(extra.requestHeaders)) {
-      headers[name] = value
+      const lower = name.toLowerCase()
+      if (lower !== 'content-type' && lower !== 'content-length' && lower !== 'content-disposition') {
+        headers[name] = value
+      }
     }
   }
   return Object.keys(headers).length > 0 ? headers : undefined
@@ -859,7 +896,7 @@ export async function pushHls(
   descriptor: MediaDescriptor,
   m3u8Text: string,
   options?: { mergeFormat?: string },
-  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string> },
+  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string>; title?: string },
 ): Promise<void> {
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
@@ -889,7 +926,7 @@ export async function pushUrl(
   url: string,
   descriptor: MediaDescriptor,
   options?: { mergeFormat?: string },
-  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string> },
+  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string>; title?: string },
 ): Promise<void> {
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
@@ -918,7 +955,7 @@ export async function pushUrl(
 /** 推送普通媒体到 velo 桌面端 */
 export async function pushNormal(
   descriptor: MediaDescriptor,
-  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string> },
+  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string>; title?: string },
 ): Promise<void> {
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')

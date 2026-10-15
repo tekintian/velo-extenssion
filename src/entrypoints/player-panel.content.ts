@@ -751,6 +751,7 @@ export default defineContentScript({
                   method: item?.method,
                   requestBody: item?.requestBody,
                   requestHeaders: item?.requestHeaders,
+                  ext: item?.ext,
                 },
               })) as { success: boolean; message?: string }
               if (!r.success) {

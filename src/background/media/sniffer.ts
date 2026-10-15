@@ -350,8 +350,13 @@ export function startSniffer(): void {
         // 例：URL 无后缀但 CT=application/pdf → ext=pdf
         const extFromCT = extFromContentType(contentType)
 
-        // 扩展名优先级：CD > URL > MIME 表反查
-        const ext = (fileNameFromCD ? getExt(fileNameFromCD) : '') || getExt(urlFileName) || extFromCT
+        // === NDM bg.js 扩展名优先级：MIME > CD > URL ===
+        // NDM: b.g = b.O || b.P || b.s
+        // 其中 b.O = MIME 表反查首个扩展名, b.P = CD filename 的扩展名, b.s = URL 路径的扩展名
+        // 修复：之前 velo 用 CD > URL > MIME 优先级，与 NDM 不一致
+        const extFromCD = fileNameFromCD ? getExt(fileNameFromCD) : ''
+        const extFromUrl = getExt(urlFileName)
+        const ext = extFromCT || extFromCD || extFromUrl
 
         if (SKIP_URL_FRAGMENTS.some((f) => urlPath.toLowerCase().includes(f))) {
           pendingRequests.delete(details.requestId)
@@ -362,6 +367,20 @@ export function startSniffer(): void {
           return undefined
         }
         if (ext && !MEDIA_EXT_RE.test(ext) && NON_DOWNLOAD_EXT_RE.test(ext) && !isNonMediaDownloadExt(ext)) {
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+        // === NDM bg.js: json 排除（扩展名 + MIME 反查 + CD 扩展名） ===
+        // NDM: P(b.O.toLowerCase(), "json") || P(b.P.toLowerCase(), "json")
+        // 即从 Content-Type 反查的扩展名或 Content-Disposition 中的扩展名是 json 也排除
+        if ((ext && ext.toLowerCase() === 'json') || (extFromCT && extFromCT.toLowerCase() === 'json') || (extFromCD && extFromCD.toLowerCase() === 'json')) {
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+        // === NDM bg.js: DCLK-AdSvr 排除（DoubleClick 广告服务器） ===
+        // NDM: "DCLK-AdSvr" != L(b.B, "Server")
+        const serverHeader = getHeader(headers, 'Server') ?? ''
+        if (serverHeader === 'DCLK-AdSvr') {
           pendingRequests.delete(details.requestId)
           return undefined
         }
@@ -389,13 +408,53 @@ export function startSniffer(): void {
           return undefined
         }
 
+        // === NDM da 正则：强制走 HLS 解析路径的扩展名（非分片） ===
+        // NDM bg.js: `da=/^(?:FLV|AVI|MPG|MPE|WMV|QT|MOV|RM|RAM|WMA|MID|MIDI|AAC|MKV|RMVB)$/i`
+        // 当 resourceType 是 _frame 或不在 z=["object","xmlhttprequest","media","other"] 中时，
+        // da.test(ext) 命中也嗅探（如 iframe 中加载的 .flv/.avi 等）
+        const DA_EXT_RE = /^(?:FLV|AVI|MPG|MPE|WMV|QT|MOV|RM|RAM|WMA|MID|MIDI|AAC|MKV|RMVB)$/i
+        const isDaExt = ext && DA_EXT_RE.test(ext)
+
+        // === NDM 嗅探条件链（完整移植自 bg.js V.V 行 775-776） ===
+        // NDM: n || "other"==b.type && B.test(b.g) || (b.R||!g) && da.test(b.g) || (b.R||"other"==b.type) && (k&&!r || ba.test(p) || b.g&&!B.test(b.g)&&!ca.test(b.g))
+        // 其中：
+        //   n = main_frame && B.test(ext) && !C.test(ext) — 主帧加载的媒体
+        //   b.R = O(f, "_frame") — resourceType 含 _frame
+        //   g = 0 <= z.indexOf(f) — resourceType 在标准嗅探类型中
+        //   k = VTT/SRT 字幕
+        //   r = js/txt/dict 排除
+        //   ba = 强制下载 CT
+        //   ca = 非下载扩展名
+        const isMainFrame = pending.resourceType === 'main_frame'
+        const isSubFrame = pending.resourceType === 'sub_frame'
+        const isFrame = isMainFrame || isSubFrame
+        const isStandardSniffType = ['object', 'xmlhttprequest', 'media', 'other'].includes(pending.resourceType)
+        const isSubtitle = ext && /^(?:vtt|srt)$/i.test(ext)
+        const isJsTxtDict = ext && /^(?:js|txt|dict)$/i.test(ext)
+        const isUnknownExt = ext && !MEDIA_EXT_RE.test(ext) && !NON_DOWNLOAD_EXT_RE.test(ext) && !isNonMediaDownloadExt(ext)
+
+        // NDM 条件 1: main_frame 媒体（直接打开 .mp4 URL 等）
+        const condMainFrameMedia = isMainFrame && isMediaExt && !isHlsSegment
+        // NDM 条件 2: other 类型 + 媒体扩展名
+        const condOtherMedia = pending.resourceType === 'other' && isMediaExt
+        // NDM 条件 3: (frame 或 非标准类型) + da 扩展名
+        const condFrameDa = (isFrame || !isStandardSniffType) && isDaExt
+        // NDM 条件 4: (frame 或 other) + (字幕非js/txt/dict 或 强制下载CT 或 未知扩展名)
+        const condFrameMisc = (isFrame || pending.resourceType === 'other') && (
+          (isSubtitle && !isJsTxtDict) || isForceDownloadCT || isUnknownExt
+        )
+
         const sniffable =
           !isHlsSegment &&
           (isMediaExt ||
             isAttachment ||
             isForceDownloadCT ||
             isVideoAudioCT ||
-            isWhitelistExt)
+            isWhitelistExt ||
+            condMainFrameMedia ||
+            condOtherMedia ||
+            condFrameDa ||
+            condFrameMisc)
 
         if (!sniffable) {
           pendingRequests.delete(details.requestId)
@@ -483,33 +542,130 @@ export function startSniffer(): void {
             pushedUrlSet.add(pending.url)
             pushedUrlSet.add(details.url)
             logger.info('[sniffer] non-media download, auto-pushing to client:', ext, pending.url.slice(0, 80), 'client:', hasPushClient ? 'pushClient' : cfg.client)
-            void sendToDownloadClient(
-              pending.url,
-              fileNameFromCD || urlFileName,
-              {
-                contentType: contentType.split(';')[0]!.trim(),
-                contentDisposition,
-                method: pending.method,
-                requestBody: pending.requestBody,
-                requestHeaders: pending.requestHeaders,
-              },
-            ).then((result) => {
+            // === 获取 pageUrl + cookies（与 NDM bg.js V.J 对齐） ===
+            // NDM 流程：V.V → chrome.cookies.getAll({url}, V.J) → V.J 设置 item.cookies → V.I 推送
+            // 缺少 Cookie/Referer/Origin 时，服务端不认识会话，返回 HTML 登录/引导页而非真实文件
+            const pushUrl = pending.url
+            const pushFileName = fileNameFromCD || urlFileName
+            const pushContentType = contentType.split(';')[0]!.trim()
+            const pushMethod = pending.method
+            const pushRequestBody = pending.requestBody
+            const pushRequestHeaders = pending.requestHeaders
+            const pushTabId = pending.tabId
+
+            void (async () => {
+              let pageUrl: string | undefined
+              let cookies: string | undefined
+              let title: string | undefined
+              try {
+                const tab = await chrome.tabs.get(pushTabId)
+                pageUrl = tab.url
+                title = tab.title
+              } catch { /* tab may have been closed */ }
+
+              // === NDM bg.js: openerTabId 处理（弹窗窗口的 pageUrl/title） ===
+              // NDM: chrome.tabs.query({active:true, currentWindow:true}) →
+              //   如果活动标签页 URL == 推送 URL 且有 openerTabId →
+              //   从 opener 标签页获取 pageUrl 和 title
+              // 场景：点击下载链接后打开新窗口（popup），新窗口的 URL 是下载 URL，
+              // 但认证信息应从原始页面（opener）获取
+              // NDM 额外逻辑：B.test(b.g) → chrome.tabs.remove(t[0].id) + v["6"]="media"
+              // 即如果 URL 扩展名匹配媒体正则，删除弹窗标签页并设置 priority 为 "media"
+              let pushPriority: string = 'normal'
+              try {
+                const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+                if (activeTab && (pushUrl === activeTab.pendingUrl || pushUrl === activeTab.url) && activeTab.openerTabId) {
+                  const openerTab = await chrome.tabs.get(activeTab.openerTabId)
+                  if (!pageUrl) {
+                    pageUrl = openerTab.url
+                    title = openerTab.title
+                  }
+                  // NDM: B.test(b.g) && (chrome.tabs.remove(t[0].id), v["6"] = "media")
+                  if (ext && MEDIA_EXT_RE.test(ext) && activeTab.id != null) {
+                    chrome.tabs.remove(activeTab.id).catch(() => {})
+                    pushPriority = 'media'
+                    logger.info('[sniffer] openerTabId + media ext: removing popup tab', activeTab.id, 'priority → media')
+                  }
+                }
+              } catch { /* opener tab may not exist */ }
+              try {
+                const cookieList = await chrome.cookies.getAll({ url: pushUrl })
+                if (cookieList.length > 0) {
+                  cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
+                }
+              } catch { /* cookies API may fail for some URLs */ }
+
+              // NDM bg.js S(): POST 请求从 requestHeaders 提取 Content-Type/Content-Disposition
+              // 覆盖到推送消息的 ["10"]/["11"] 字段（对应 velo 的 content_type/content_disposition）
+              // 对于 POST 请求，请求体的 CT（如 multipart/form-data）比响应头 CT 更重要
+              let effectiveContentType = pushContentType
+              let effectiveContentDisposition = contentDisposition
+              if (pushMethod === 'POST' && pushRequestHeaders) {
+                for (const [name, value] of Object.entries(pushRequestHeaders)) {
+                  const lower = name.toLowerCase()
+                  if (lower === 'content-type' && value) effectiveContentType = value.trim()
+                  if (lower === 'content-disposition' && value) effectiveContentDisposition = value.trim()
+                }
+              }
+
+              const result = await sendToDownloadClient(
+                pushUrl,
+                pushFileName,
+                {
+                  contentType: effectiveContentType,
+                  contentDisposition: effectiveContentDisposition,
+                  method: pushMethod,
+                  requestBody: pushRequestBody,
+                  requestHeaders: pushRequestHeaders,
+                  pageUrl,
+                  cookies,
+                  title,
+                  contentLength: size > 0 ? String(size) : undefined,
+                  priority: pushPriority,
+                },
+              )
               if (!result.success) {
                 lastPushedUrl = ''
-                pushedUrlSet.delete(pending.url)
+                pushedUrlSet.delete(pushUrl)
                 pushedUrlSet.delete(details.url)
-                logger.warn('[sniffer] auto-push failed, clearing lastPushedUrl:', result.message, 'url:', pending.url.slice(0, 80))
+                logger.warn('[sniffer] auto-push failed, clearing lastPushedUrl:', result.message, 'url:', pushUrl.slice(0, 80))
               }
-            }).catch((e) => {
+            })().catch((e) => {
               lastPushedUrl = ''
-              pushedUrlSet.delete(pending.url)
+              pushedUrlSet.delete(pushUrl)
               pushedUrlSet.delete(details.url)
-              logger.warn('[sniffer] auto-push error, clearing lastPushedUrl:', (e as Error).message, 'url:', pending.url.slice(0, 80))
+              logger.warn('[sniffer] auto-push error, clearing lastPushedUrl:', (e as Error).message, 'url:', pushUrl.slice(0, 80))
             })
           } else {
             logger.info('[sniffer] non-media download, no client available, letting browser handle:', ext, pending.url.slice(0, 80))
           }
 
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        // === NDM bg.js: 媒体大小阈值 — 小文件不嗅探 ===
+        // NDM: `(!b["7"] || 512E3 < b["7"] || k)` — 媒体 < 512KB 不嗅探（字幕 k 除外）
+        // 避免嗅探页面内嵌的短音频（如 UI 音效、提示音）等无意义的小媒体
+        // NDM: `!("ASF" == b.g && 256E4 >= b["7"])` — ASF 且 < 2.5MB 也不嗅探
+        const isSubtitleExt = ext && /^(?:vtt|srt)$/i.test(ext)
+        if (isMediaExt && !isSubtitleExt && size > 0 && size < 512 * 1024) {
+          logger.debug('[sniffer] media too small, skipping:', ext, size, 'bytes, url:', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+        if (ext && ext.toUpperCase() === 'ASF' && size > 0 && size <= 2560000) {
+          logger.debug('[sniffer] ASF too small, skipping:', size, 'bytes, url:', pending.url.slice(0, 80))
+          pendingRequests.delete(details.requestId)
+          return undefined
+        }
+
+        // === NDM bg.js: 非 m3u8 大文本 XHR 嗅探 ===
+        // NDM: 非 m3u8/字幕/POST/vimeo/youtube/google，且是 txt/js XHR > 300KB 时也嗅探
+        // 典型场景：某些网站通过 XHR 返回大段 JS/JSON 数据，实际是视频配置或播放列表
+        const isTxtJsXhr = (ext && /^(?:txt|js)$/i.test(ext)) && pending.resourceType === 'xmlhttprequest'
+        if (isTxtJsXhr && size > 0 && size <= 307200) {
+          logger.debug('[sniffer] txt/js XHR too small, skipping:', ext, size, 'bytes, url:', pending.url.slice(0, 80))
           pendingRequests.delete(details.requestId)
           return undefined
         }
@@ -1030,17 +1186,33 @@ function handleFtpOrFileRequest(
         lastPushedUrl = details.url
         pushedUrlSet.add(details.url)
         logger.info('[sniffer]', protocol, 'non-media download, auto-pushing to client:', ext, details.url.slice(0, 80))
-        void sendToDownloadClient(
-          details.url,
-          fileName,
-          { contentType: contentType || undefined },
-        ).then((result) => {
+        // NDM V.T FTP: 从 content script port 获取 pageUrl + title
+        void (async () => {
+          let pageUrl: string | undefined
+          let cookies: string | undefined
+          let title: string | undefined
+          try {
+            const tab = await chrome.tabs.get(tabId)
+            pageUrl = tab.url
+            title = tab.title
+          } catch { /* tab may have been closed */ }
+          try {
+            const cookieList = await chrome.cookies.getAll({ url: details.url })
+            if (cookieList.length > 0) {
+              cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
+            }
+          } catch { /* cookies API may fail */ }
+          const result = await sendToDownloadClient(
+            details.url,
+            fileName,
+            { contentType: contentType || undefined, pageUrl, cookies, title },
+          )
           if (!result.success) {
             lastPushedUrl = ''
             pushedUrlSet.delete(details.url)
             logger.warn('[sniffer]', protocol, 'auto-push failed, clearing lastPushedUrl:', result.message)
           }
-        }).catch((e) => {
+        })().catch((e: unknown) => {
           lastPushedUrl = ''
           pushedUrlSet.delete(details.url)
           logger.warn('[sniffer]', protocol, 'auto-push error, clearing lastPushedUrl:', (e as Error).message)

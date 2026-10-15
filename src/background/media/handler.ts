@@ -106,9 +106,9 @@ export function registerMediaHandlers(): void {
     return { success: true as const, parsed }
   })
 
-  registerHandler<{ url: string; fileName?: string; pageUrl?: string; contentType?: string; contentDisposition?: string; method?: string; requestBody?: string; requestHeaders?: Record<string, string> }>('sendToDownload', async (message, sender) => {
-    const { url, fileName, pageUrl, contentType, contentDisposition, method, requestBody, requestHeaders } = message.payload
-    logger.info('[media] sendToDownload: url=', url?.slice(0, 80), 'fileName=', fileName, 'method=', method)
+  registerHandler<{ url: string; fileName?: string; pageUrl?: string; contentType?: string; contentDisposition?: string; method?: string; requestBody?: string; requestHeaders?: Record<string, string>; ext?: string }>('sendToDownload', async (message, sender) => {
+    const { url, fileName, pageUrl, contentType, contentDisposition, method, requestBody, requestHeaders, ext } = message.payload
+    logger.info('[media] sendToDownload: url=', url?.slice(0, 80), 'fileName=', fileName, 'method=', method, 'ext=', ext)
     if (!url) {
       return { success: false, message: 'URL 为空' }
     }
@@ -124,6 +124,11 @@ export function registerMediaHandlers(): void {
     } catch {
       // ignore
     }
+    // NDM V.aa case 6: e["6"] = c["6"] || "media";
+    //   !c.fEx || "vtt"!=c.fEx.toLowerCase() && "srt"!=c.fEx.toLowerCase() || (e["6"] = "normal");
+    // VTT/SRT 字幕 priority 为 "normal"，其余为 "media"
+    const isSubtitle = ext && /^(?:vtt|srt)$/i.test(ext)
+    const priority = isSubtitle ? 'normal' : 'media'
     return await sendToDownloadClient(url, fileName, {
       pageUrl: finalPageUrl,
       contentType,
@@ -132,6 +137,8 @@ export function registerMediaHandlers(): void {
       cookies,
       requestBody,
       requestHeaders,
+      title: sender.tab?.title || undefined,
+      priority,
     })
   })
 

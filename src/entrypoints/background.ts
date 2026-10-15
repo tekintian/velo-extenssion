@@ -497,7 +497,9 @@ async function handleContextMenu(info: chrome.contextMenus.OnClickData, tab: chr
   if (!url) return
 
   // P0 修复：右键下载也需携带认证信息（Cookie/Referer/Origin）
-  const pageUrl = tab?.url || url
+  // NDM V.W: c["2"] = a.linkUrl || a.srcUrl, c.pageUrl = a.pageUrl, c["4"] = b.title, c["5"] = b.url || a.pageUrl
+  const pageUrl = tab?.url || info.pageUrl || url
+  const title = tab?.title || ''
   let cookies = ''
   try {
     const cookieList = await chrome.cookies.getAll({ url })
@@ -508,6 +510,6 @@ async function handleContextMenu(info: chrome.contextMenus.OnClickData, tab: chr
 
   await pushNormal(
     { url, pageUrl, method: 'GET', ext: '', mime: '', contentLength: 0, contentType: '', contentDisposition: '', headers: {} },
-    { pageUrl, cookies },
+    { pageUrl, cookies, title },
   )
 }
