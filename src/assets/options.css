@@ -4,6 +4,13 @@
   --color-primary: #4a90d9;
   --color-danger: #ff4d4f;
   --color-success: #52c41a;
+  --accent: #10b981;
+  --accent-bg: rgba(16, 185, 129, 0.1);
+  --muted-fg: #888;
+  --muted-bg: #f5f5f5;
+  --border: #ddd;
+  --destructive: #ef4444;
+  --destructive-bg: rgba(239, 68, 68, 0.1);
 }
 
 * {
@@ -159,6 +166,8 @@ body {
 
 .options-section input[type="number"],
 .options-section input[type="text"],
+.options-section input[type="url"],
+.options-section input[type="password"],
 .options-section select {
   padding: 8px 10px;
   border: 1px solid #d9d9d9;

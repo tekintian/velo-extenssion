@@ -777,13 +777,13 @@ export function startSniffer(): void {
     }
   })
 
-  // webNavigation.onHistoryStateUpdated — SPA 路由变化时递增代际号 + 通知 player-panel 刷新
-  // NDM bg.js V.onHistoryStateUpdated 只发消息给 content script (port[11, url])，
-  // 不碰 background 的媒体数据。让 panel 自己决定何时清面板 (pageUrlChanged 收到后 destroyPanel)。
-  // tabMediaMap 由 player-panel 重新从 background 拉取 (3s 轮询)，不清 background 数据避免竞态丢失。
+  // webNavigation.onHistoryStateUpdated — SPA 路由变化时清理旧媒体项、递增代际号并通知 player-panel 刷新
+  // 对齐 adclear_v6：SPA 路由变化时必须清理 tabMediaMap，否则 B站等 DASH 站点切换视频后
+  // 旧的 m4s video/audio 项残留，DASH 配对仍匹配到旧项，导致"文件名变了但实际文件还是原来的"
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.tabId >= 0) {
       const tabId = details.tabId
+      tabMediaMap.delete(tabId)
       const prevGen = tabGenerationMap.get(tabId) ?? 0
       tabGenerationMap.set(tabId, prevGen + 1)
       // SPA 路由变化 → 清理该 tab 的 HLS cleaned context（旧页面的 m3u8 不再有效）

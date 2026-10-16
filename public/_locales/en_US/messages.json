@@ -82,6 +82,52 @@
   "popup_client_not_found": {
     "message": "Velo client not detected, please make sure it is running"
   },
+  "popup_hls_ad_filter": {
+    "message": "HLS Ad Segment Filter"
+  },
+  "popup_hls_ad_filter_desc": {
+    "message": "Intercept m3u8 streams, 7-signal weighted ad segment removal"
+  },
+  "popup_hls_sample_save": {
+    "message": "HLS Sample Save"
+  },
+  "popup_hls_detect": {
+    "message": "HLS Ad Detection"
+  },
+  "popup_ad_segments": {
+    "message": "Ad segments"
+  },
+  "popup_ad_duration": {
+    "message": "Ad duration"
+  },
+  "popup_no_active_tab": {
+    "message": "No active tab found"
+  },
+  "popup_playback_read_fail": {
+    "message": "Failed to read playback state"
+  },
+  "popup_play_video_first": {
+    "message": "Please play the video first"
+  },
+  "popup_sample_saved": {
+    "message": "✓ Ad sample saved (t=$time$s), fingerprint auto-learned",
+    "placeholders": {
+      "time": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_capture_fail": {
+    "message": "Capture failed: $error$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_unknown_error": {
+    "message": "Unknown error"
+  },
   "options_title": {
     "message": "Velo Extension Settings"
   },
@@ -237,11 +283,98 @@
   "options_mode_data_url": {
     "message": "data: URL (inline base64)"
   },
+  "options_mode_enumerate": {
+    "message": "Enumerate segments"
+  },
   "options_mode_passthrough": {
     "message": "Passthrough (detect only, no cleaning)"
   },
   "options_mode_disabled": {
     "message": "Disabled"
+  },
+  "options_download_client_title": {
+    "message": "Download Client"
+  },
+  "options_download_client_desc": {
+    "message": "Configure which client to download sniffed media to"
+  },
+  "options_client_type": {
+    "message": "Client type"
+  },
+  "options_browser_native": {
+    "message": "Browser native"
+  },
+  "options_aria2_client": {
+    "message": "Motrix/aria2"
+  },
+  "options_ndm_desktop": {
+    "message": "NDM desktop"
+  },
+  "options_velo_client": {
+    "message": "velo Client"
+  },
+  "options_use_chrome_download": {
+    "message": "Use Chrome built-in download"
+  },
+  "options_http_json_rpc": {
+    "message": "HTTP JSON-RPC protocol"
+  },
+  "options_ws_protocol": {
+    "message": "WebSocket protocol"
+  },
+  "options_velo_protocol": {
+    "message": "WebSocket JSON push protocol"
+  },
+  "options_rpc_host": {
+    "message": "RPC Host"
+  },
+  "options_rpc_port": {
+    "message": "RPC Port"
+  },
+  "options_rpc_secret": {
+    "message": "RPC Secret (optional)"
+  },
+  "options_rpc_secret_placeholder": {
+    "message": "Leave empty for no key"
+  },
+  "options_velo_host": {
+    "message": "Push server host"
+  },
+  "options_velo_port": {
+    "message": "Push server port"
+  },
+  "options_velo_token": {
+    "message": "Pairing token"
+  },
+  "options_velo_token_placeholder": {
+    "message": "Get from velo pairing QR code"
+  },
+  "options_ndm_hint": {
+    "message": "NDM desktop uses fixed address, no extra config needed. Ensure NDM desktop is running."
+  },
+  "options_native_hint": {
+    "message": "Browser native download uses Chrome built-in download manager. Click the download button on media items."
+  },
+  "options_velo_hint": {
+    "message": "velo (Motrix Lite) receives pushes via WebSocket. Ensure velo is running with push server enabled (default port 16888). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
+  },
+  "options_hls_delivery_mode": {
+    "message": "Delivery Mode"
+  },
+  "options_test_download": {
+    "message": "Test Download"
+  },
+  "options_test_download_desc": {
+    "message": "Enter a URL to test download client connection."
+  },
+  "options_testing": {
+    "message": "Testing..."
+  },
+  "options_test": {
+    "message": "Test"
+  },
+  "options_download_sent": {
+    "message": "✓ Download sent"
   },
   "options_custom_rules_title": {
     "message": "Custom Rules"

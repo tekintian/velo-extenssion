@@ -10,6 +10,12 @@ function Popup() {
   const [token, setToken] = useState('')
   const [status, setStatus] = useState('')
 
+  const [hlsEnabled, setHlsEnabled] = useState(true)
+  const [detectInfo, setDetectInfo] = useState<{
+    report: { ads: number; total: number; adDuration: number }
+    baseUrl: string
+  } | null>(null)
+
   useEffect(() => {
     void loadStatus()
   }, [])
@@ -28,6 +34,27 @@ function Popup() {
     } catch {
       setStatus(i18n('popup_comm_error'))
     }
+
+    try {
+      const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
+      if (full) {
+        setHlsEnabled(full.enableAdSkip ?? true)
+      }
+    } catch { /* ignore */ }
+
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+      const tabId = tabs[0]?.id ?? 0
+      if (tabId > 0) {
+        const r = await chrome.runtime.sendMessage({
+          type: 'getLastDetect',
+          payload: { tabId },
+        }) as { report: { ads: number; total: number; adDuration: number }; baseUrl: string } | null
+        if (r?.report?.ads && r.report.ads > 0) {
+          setDetectInfo(r)
+        }
+      }
+    } catch { /* ignore */ }
   }
 
   const handleAutoConnect = useCallback(async () => {
@@ -82,6 +109,49 @@ function Popup() {
       setStatus(i18n('popup_clear_error', [(e as Error).message]))
     }
   }, [])
+
+  async function handleHlsToggle(v: boolean) {
+    setHlsEnabled(v)
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'setHlsFullConfig',
+        payload: { enableAdSkip: v },
+      })
+    } catch {
+      setHlsEnabled(!v)
+    }
+  }
+
+  async function handleSampleSave() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.id) {
+        alert(i18n('popup_no_active_tab'))
+        return
+      }
+      let pb: { ok?: boolean; currentTime?: number; error?: string } | undefined
+      try {
+        pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' })
+      } catch {
+        pb = { ok: false, error: 'content script not available' }
+      }
+      if (!pb?.ok) {
+        alert(i18n('popup_playback_read_fail') + ': ' + (pb?.error || i18n('popup_play_video_first')))
+        return
+      }
+      const r = await chrome.runtime.sendMessage({
+        type: 'captureSample',
+        payload: { tabId: tab.id, currentTime: pb?.currentTime ?? 0 },
+      }) as { success?: boolean; error?: string }
+      if (r?.success) {
+        alert(i18n('popup_sample_saved', [String(Math.round(pb?.currentTime ?? 0))]))
+      } else {
+        alert(i18n('popup_capture_fail', [r?.error ?? i18n('popup_unknown_error')]))
+      }
+    } catch (e) {
+      alert(i18n('popup_capture_fail', [(e as Error).message]))
+    }
+  }
 
   const openOptions = useCallback(() => {
     void chrome.runtime.openOptionsPage()
@@ -144,7 +214,47 @@ function Popup() {
 
       {status && <p className="popup-message">{status}</p>}
 
+      <div className="popup-section">
+        <div className="popup-switch-row">
+          <div className="popup-switch-info">
+            <div className="popup-switch-label">{i18n('popup_hls_ad_filter')}</div>
+            <div className="popup-switch-desc">{i18n('popup_hls_ad_filter_desc')}</div>
+          </div>
+          <label className="popup-toggle">
+            <input
+              type="checkbox"
+              checked={hlsEnabled}
+              onChange={(e) => void handleHlsToggle(e.target.checked)}
+            />
+            <span className="popup-toggle-slider" />
+          </label>
+        </div>
+      </div>
+
+      {detectInfo && (
+        <div className="popup-detect-card">
+          <div className="popup-detect-title">{i18n('popup_hls_detect')}</div>
+          <div className="popup-detect-grid">
+            <div>
+              <span className="popup-detect-label">{i18n('popup_ad_segments')}</span>
+              <span className="popup-detect-value">{detectInfo.report.ads}</span>
+              <span className="popup-detect-label">/{detectInfo.report.total}</span>
+            </div>
+            <div>
+              <span className="popup-detect-label">{i18n('popup_ad_duration')}</span>
+              <span className="popup-detect-value">{detectInfo.report.adDuration}s</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="popup-actions">
+        <button
+          className="btn-sample"
+          onClick={() => void handleSampleSave()}
+        >
+          🐛 {i18n('popup_hls_sample_save')}
+        </button>
         <button className="btn-link" onClick={openOptions}>
           ⚙️ {i18n('popup_settings_button')}
         </button>
