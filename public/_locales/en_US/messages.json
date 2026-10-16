@@ -16,6 +16,9 @@
   "popup_not_paired": {
     "message": "Not paired"
   },
+  "popup_connected": {
+    "message": "Connected"
+  },
   "popup_pair_button": {
     "message": "Pair with Desktop"
   },
@@ -81,6 +84,52 @@
   },
   "popup_client_not_found": {
     "message": "Velo client not detected, please make sure it is running"
+  },
+  "popup_desktop_client": {
+    "message": "Desktop"
+  },
+  "popup_ad_filter": {
+    "message": "Ad Filter"
+  },
+  "popup_enabled": {
+    "message": "Enabled"
+  },
+  "popup_disabled": {
+    "message": "Disabled"
+  },
+  "popup_filtered_count": {
+    "message": "$1$ filtered",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_download_client": {
+    "message": "Download Client"
+  },
+  "popup_open_settings": {
+    "message": "Open Settings"
+  },
+  "popup_download_clean_m3u8": {
+    "message": "Download ad-free m3u8"
+  },
+  "popup_copy_media_url": {
+    "message": "Copy media URL"
+  },
+  "popup_url_copied": {
+    "message": "✓ URL copied"
+  },
+  "popup_no_media": {
+    "message": "No media on this page"
+  },
+  "popup_download_fail": {
+    "message": "Download failed: $1$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
   },
   "popup_hls_ad_filter": {
     "message": "HLS Ad Segment Filter"

@@ -4,6 +4,10 @@
   --color-primary: #4a90d9;
   --color-danger: #ff4d4f;
   --color-success: #52c41a;
+  --color-warning: #fa8c16;
+  --border: #eee;
+  --muted-fg: #888;
+  --muted-bg: #f5f5f5;
 }
 
 * {
@@ -13,7 +17,7 @@
 }
 
 body {
-  width: 280px;
+  width: 300px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 13px;
   color: #333;
@@ -28,7 +32,14 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+}
+
+.popup-header-text {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .popup-header h1 {
@@ -36,109 +47,92 @@ body {
   font-weight: 600;
 }
 
+.popup-version {
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+
 .popup-logo {
   width: 24px;
   height: 24px;
 }
 
-.popup-status {
-  padding: 8px;
-  background: #f5f5f5;
-  border-radius: 8px;
-  margin-bottom: 10px;
-}
-
-.status-paired {
-  color: var(--color-success);
-}
-
-.status-unpaired {
-  color: var(--color-danger);
-}
-
-.popup-pair-form {
+.popup-settings-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  border-radius: 6px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.popup-settings-btn:hover {
+  background: var(--muted-bg);
+}
+
+.popup-status-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
-.popup-pair-form label {
+.popup-status-card {
+  padding: 8px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 12px;
-  color: #666;
 }
 
-.popup-pair-form input {
-  padding: 6px 8px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 13px;
+.popup-status-card.status-ok {
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+}
+
+.popup-status-card.status-err {
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+}
+
+.status-card-label {
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+
+.status-card-value {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-card-detail {
+  font-size: 11px;
+  color: var(--muted-fg);
 }
 
 .popup-message {
   text-align: center;
   font-size: 12px;
-  color: #666;
+  color: var(--muted-fg);
   margin: 6px 0;
 }
 
 .popup-actions {
   margin-top: 8px;
-}
-
-.btn-primary {
-  width: 100%;
-  padding: 8px;
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.btn-primary:hover {
-  background: #357abd;
-}
-
-.btn-secondary {
-  width: 100%;
-  padding: 8px;
-  background: #fff;
-  color: var(--color-primary);
-  border: 1px solid var(--color-primary);
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  margin-bottom: 6px;
-}
-
-.btn-secondary:hover {
-  background: #f0f7ff;
-}
-
-.btn-link {
-  width: 100%;
-  padding: 6px;
-  background: none;
-  border: none;
-  color: #666;
-  cursor: pointer;
-  font-size: 12px;
-  text-align: center;
-}
-
-.btn-link:hover {
-  color: var(--color-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .popup-section {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--border);
 }
 
 .popup-switch-row {
@@ -160,7 +154,7 @@ body {
 
 .popup-switch-desc {
   font-size: 11px;
-  color: #888;
+  color: var(--muted-fg);
   margin-top: 2px;
 }
 
@@ -220,7 +214,7 @@ body {
 
 .popup-detect-title {
   font-size: 11px;
-  color: #888;
+  color: var(--muted-fg);
   margin-bottom: 6px;
 }
 
@@ -229,16 +223,102 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   font-size: 12px;
+  margin-bottom: 8px;
 }
 
 .popup-detect-label {
-  color: #888;
+  color: var(--muted-fg);
 }
 
 .popup-detect-value {
-  color: #ff4d4f;
+  color: var(--color-danger);
   font-weight: 700;
   margin-left: 4px;
+}
+
+.popup-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.btn-quick-primary {
+  width: 100%;
+  padding: 6px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.btn-quick-primary:hover {
+  background: #357abd;
+}
+
+.btn-quick-ghost {
+  width: 100%;
+  padding: 6px;
+  background: none;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.btn-quick-ghost:hover {
+  background: #f0f7ff;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-primary:hover {
+  background: #357abd;
+}
+
+.btn-secondary {
+  width: 100%;
+  padding: 8px;
+  background: #fff;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-secondary:hover {
+  background: #f0f7ff;
+}
+
+.btn-ghost {
+  width: 100%;
+  padding: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted-fg);
+  cursor: pointer;
+  font-size: 12px;
+  border-radius: 6px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.btn-ghost:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .btn-sample {
@@ -250,9 +330,34 @@ body {
   border-radius: 8px;
   cursor: pointer;
   font-size: 12px;
-  margin-bottom: 6px;
 }
 
 .btn-sample:hover {
   background: #ffe0b2;
+}
+
+.popup-footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.popup-dl-client {
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+
+.popup-open-options {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.popup-open-options:hover {
+  text-decoration: underline;
 }

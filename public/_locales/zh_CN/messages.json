@@ -16,6 +16,9 @@
   "popup_not_paired": {
     "message": "未配对"
   },
+  "popup_connected": {
+    "message": "已连接"
+  },
   "popup_pair_button": {
     "message": "配对桌面端"
   },
@@ -81,6 +84,52 @@
   },
   "popup_client_not_found": {
     "message": "未检测到 Velo 客户端，请确认已启动"
+  },
+  "popup_desktop_client": {
+    "message": "桌面端"
+  },
+  "popup_ad_filter": {
+    "message": "广告过滤"
+  },
+  "popup_enabled": {
+    "message": "已启用"
+  },
+  "popup_disabled": {
+    "message": "已禁用"
+  },
+  "popup_filtered_count": {
+    "message": "已过滤 $1$ 条",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_download_client": {
+    "message": "下载客户端"
+  },
+  "popup_open_settings": {
+    "message": "打开完整设置"
+  },
+  "popup_download_clean_m3u8": {
+    "message": "下载去广告 m3u8"
+  },
+  "popup_copy_media_url": {
+    "message": "复制媒体 URL"
+  },
+  "popup_url_copied": {
+    "message": "✓ URL 已复制"
+  },
+  "popup_no_media": {
+    "message": "当前页无媒体"
+  },
+  "popup_download_fail": {
+    "message": "下载失败: $1$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
   },
   "popup_hls_ad_filter": {
     "message": "HLS 广告分片过滤"
