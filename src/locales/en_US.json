@@ -500,5 +500,43 @@
   },
   "options_privacy_headers_desc": {
     "message": "Page request headers are automatically forwarded to the download client to ensure \"if you can see it, you can download it\". Make sure the download client address is trusted."
+  },
+  "badge_title": {
+    "message": "AdClear Ad Filter"
+  },
+  "badge_close": {
+    "message": "Close"
+  },
+  "badge_ad_segments": {
+    "message": "Filtered ad segments"
+  },
+  "badge_ad_duration": {
+    "message": "Ad duration"
+  },
+  "badge_content_duration": {
+    "message": "Content duration"
+  },
+  "badge_matched_rule": {
+    "message": "Matched rule"
+  },
+  "badge_download_m3u8": {
+    "message": "📥 Download ad-free m3u8"
+  },
+  "badge_ad_filtered": {
+    "message": "$1 ads filtered",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "badge_downloading": {
+    "message": "Downloading..."
+  },
+  "badge_downloaded": {
+    "message": "Downloaded"
+  },
+  "badge_download_failed": {
+    "message": "Download failed"
   }
 }

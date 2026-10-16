@@ -12,6 +12,7 @@
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
+import { asWin } from '@/lib/cast'
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -20,8 +21,8 @@ export default defineContentScript({
   world: 'MAIN',
 
   main() {
-    const HLS_NS = (window as unknown as Record<string, unknown>).__HLS_HOOK_NAMESPACE__ ??= {} as Record<string, unknown>
-    ;(window as unknown as Record<string, unknown>).__HLS_HOOK_NAMESPACE__ = HLS_NS
+    const HLS_NS = asWin().__HLS_HOOK_NAMESPACE__ ??= {} as Record<string, unknown>
+    asWin().__HLS_HOOK_NAMESPACE__ = HLS_NS
 
     if ((HLS_NS as Record<string, unknown>).owner) {
       logger.info('[AdClear HLS] Another extension already hooked HLS, owner:', (HLS_NS as Record<string, unknown>).owner, '— skipping')
@@ -49,7 +50,7 @@ export default defineContentScript({
 })
 
 function installHlsHooks(): void {
-  const HLS_NS = (window as unknown as Record<string, unknown>).__HLS_HOOK_NAMESPACE__
+  const HLS_NS = asWin().__HLS_HOOK_NAMESPACE__
   if ((HLS_NS as Record<string, unknown>).owner) {
     logger.info('[AdClear HLS] Another extension already hooked HLS, owner:', (HLS_NS as Record<string, unknown>).owner, '— skipping')
     return

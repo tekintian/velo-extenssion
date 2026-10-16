@@ -500,5 +500,43 @@
   },
   "options_privacy_headers_desc": {
     "message": "下载时自动携带页面请求头给下载客户端，以确保「能见即可下载」。请确保下载客户端地址可信。"
+  },
+  "badge_title": {
+    "message": "AdClear 广告过滤"
+  },
+  "badge_close": {
+    "message": "关闭"
+  },
+  "badge_ad_segments": {
+    "message": "已过滤广告分片"
+  },
+  "badge_ad_duration": {
+    "message": "广告时长"
+  },
+  "badge_content_duration": {
+    "message": "内容时长"
+  },
+  "badge_matched_rule": {
+    "message": "命中规则"
+  },
+  "badge_download_m3u8": {
+    "message": "📥 下载去广告 m3u8"
+  },
+  "badge_ad_filtered": {
+    "message": "$1 广告已过滤",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "badge_downloading": {
+    "message": "下载中..."
+  },
+  "badge_downloaded": {
+    "message": "已下载"
+  },
+  "badge_download_failed": {
+    "message": "下载失败"
   }
 }

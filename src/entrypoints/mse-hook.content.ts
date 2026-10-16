@@ -1,4 +1,5 @@
 import { defineContentScript } from 'wxt/utils/define-content-script'
+import { asWin } from '@/lib/cast'
 
 /**
  * MSE (MediaSource Extensions) hook — 严格移植 NDM ct.js 的 MSE 拦截逻辑
@@ -31,12 +32,13 @@ import { defineContentScript } from 'wxt/utils/define-content-script'
  */
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
+  allFrames: true,
   runAt: 'document_start',
   world: 'MAIN',
 
   main() {
-    const HLS_NS = (window as unknown as Record<string, unknown>).__HLS_HOOK_NAMESPACE__ ??= {} as Record<string, unknown>
-    ;(window as unknown as Record<string, unknown>).__HLS_HOOK_NAMESPACE__ = HLS_NS
+    const HLS_NS = asWin().__HLS_HOOK_NAMESPACE__ ??= {} as Record<string, unknown>
+    asWin().__HLS_HOOK_NAMESPACE__ = HLS_NS
 
     if ((HLS_NS as Record<string, unknown>).mseHooked) {
       return

@@ -13,6 +13,7 @@ import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
 import { clearMediaItems, getMediaItems, startSniffer, stopSniffer, isSnifferRunning, addMediaItemExternal, pairDashItems } from './sniffer'
 import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToVeloDash, getPushClient, buildVeloHeaders } from './download-client'
+import { loadCleanedContext } from '@/background/hls/handler'
 import type { DownloadClientConfig } from './types'
 import {
   sniffFacebookEmbed,
@@ -106,11 +107,77 @@ export function registerMediaHandlers(): void {
     return { success: true as const, parsed }
   })
 
-  registerHandler<{ url: string; fileName?: string; pageUrl?: string; contentType?: string; contentDisposition?: string; method?: string; requestBody?: string; requestHeaders?: Record<string, string>; ext?: string }>('sendToDownload', async (message, sender) => {
-    const { url, fileName, pageUrl, contentType, contentDisposition, method, requestBody, requestHeaders, ext } = message.payload
+  registerHandler<{ url: string; fileName?: string; pageUrl?: string; contentType?: string; contentDisposition?: string; method?: string; requestBody?: string; requestHeaders?: Record<string, string>; ext?: string; contentLength?: string }>('sendToDownload', async (message, sender) => {
+    const { url, fileName, pageUrl, contentType, contentDisposition, method, requestBody, requestHeaders, ext, contentLength } = message.payload
     logger.info('[media] sendToDownload: url=', url?.slice(0, 80), 'fileName=', fileName, 'method=', method, 'ext=', ext)
     if (!url) {
       return { success: false, message: 'URL 为空' }
+    }
+    // === m3u8 自动广告过滤：如果有 cleaned context（检测到过广告），用 cleaned m3u8 文本 ===
+    const isM3u8 = /\.m3u8?$/i.test(ext || '') || /\.m3u8?$/i.test((url || '').split('?')[0] ?? '')
+    if (isM3u8) {
+      const tabId = sender.tab?.id ?? 0
+      let cleanedCtx: Awaited<ReturnType<typeof loadCleanedContext>> = null
+      try { cleanedCtx = await loadCleanedContext(tabId) } catch { /* ignore */ }
+      if (cleanedCtx && cleanedCtx.report && cleanedCtx.report.ads > 0 && cleanedCtx.cleaned) {
+        logger.info('[media] m3u8 has cleaned context (ads=' + cleanedCtx.report.ads + ') using cleaned m3u8')
+        const cfg = await getDownloadConfig()
+        const finalPageUrl = pageUrl || sender.tab?.url || cleanedCtx.baseUrl || ''
+        let cookies = ''
+        try {
+          const cookieList = await chrome.cookies.getAll({ url })
+          if (cookieList.length > 0) cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
+        } catch { /* ignore */ }
+        const downloadExtra = { pageUrl: finalPageUrl, cookies, requestHeaders }
+        const pushClient = getPushClient()
+        const headers = buildVeloHeaders(downloadExtra)
+        const pushMsg = {
+          version: 1,
+          token: cfg.veloToken ?? 'velo-auto',
+          action: 'push_m3u8' as const,
+          url: cleanedCtx.baseUrl,
+          m3u8_text: cleanedCtx.cleaned,
+          base_url: cleanedCtx.baseUrl,
+          headers,
+          options: {
+            filename: fileName || cleanedCtx.pageTitle || cleanedCtx.baseName || 'cleaned',
+            output_dir: undefined as string | undefined,
+            merge_format: 'ts',
+            extra_headers: undefined as Record<string, string> | undefined,
+          },
+        }
+        if (pushClient) {
+          try {
+            await pushClient.push(pushMsg)
+            logger.info('[media] pushed cleaned m3u8 via PushClient')
+            return { success: true }
+          } catch (e) {
+            logger.warn('[media] PushClient cleaned m3u8 push failed falling back:' + (e as Error).message)
+          }
+        }
+        if (cfg.client === 'velo') {
+          const { sendToVeloM3u8 } = await import('./download-client')
+          const r = await sendToVeloM3u8(cleanedCtx.cleaned, cleanedCtx.baseUrl, fileName || cleanedCtx.pageTitle, cfg, downloadExtra)
+          return { success: r.success, message: r.message }
+        }
+        if (cfg.client === 'ndm') {
+          const bytes = new TextEncoder().encode(cleanedCtx.cleaned)
+          let bin = ''
+          for (const b of bytes) bin += String.fromCharCode(b)
+          const b64 = btoa(bin)
+          const dataUrl = `data:application/vnd.apple.mpegurl;base64${b64}`
+          const { sendToNdm } = await import('./download-client')
+          const r = await sendToNdm(dataUrl, fileName || cleanedCtx.pageTitle, downloadExtra)
+          return { success: r.success, message: r.message }
+        }
+        const bytes = new TextEncoder().encode(cleanedCtx.cleaned)
+        let bin = ''
+        for (const b of bytes) bin += String.fromCharCode(b)
+        const b64 = btoa(bin)
+        const dataUrl = `data:application/vnd.apple.mpegurl;base64${b64}`
+        chrome.downloads.download({ url: dataUrl, filename: `${fileName || cleanedCtx.pageTitle || 'cleaned'}_cleaned.m3u8`, saveAs: false })
+        return { success: true }
+      }
     }
     // 获取页面 URL（从 sender 或 payload）
     const finalPageUrl = pageUrl || sender.tab?.url || ''
@@ -138,6 +205,7 @@ export function registerMediaHandlers(): void {
       requestBody,
       requestHeaders,
       title: sender.tab?.title || undefined,
+      contentLength,
       priority,
     })
   })
@@ -181,17 +249,19 @@ export function registerMediaHandlers(): void {
       try {
         const headers = buildVeloHeaders(extra)
         const msg = {
+          version: 1,
+          token: cfg.veloToken ?? 'velo-auto',
           action: 'push_dash' as const,
           video_url: videoUrl,
           audio_url: audioUrl,
           url: undefined as string | undefined,
           m3u8_text: undefined as string | undefined,
-          base_url: undefined as string | undefined,
+          base_url: finalPageUrl || undefined,
           headers,
           options: {
-            filename: fileName,
+            filename: fileName ?? undefined,
             output_dir: undefined as string | undefined,
-            merge_format: 'ts',
+            merge_format: 'mp4',
             extra_headers: undefined as Record<string, string> | undefined,
           },
         }

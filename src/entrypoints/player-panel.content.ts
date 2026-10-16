@@ -752,6 +752,7 @@ export default defineContentScript({
                   requestBody: item?.requestBody,
                   requestHeaders: item?.requestHeaders,
                   ext: item?.ext,
+                  contentLength: item?.size ? String(item.size) : undefined,
                 },
               })) as { success: boolean; message?: string }
               if (!r.success) {
@@ -992,6 +993,44 @@ export default defineContentScript({
       if (mediaItems.length === 0) return
       ensureStyles()
 
+      // === NDM M.G() 过滤逻辑 ===
+      // 1. YouTube 页面不显示面板（NDM: if(!(0<=host.indexOf("youtube.com"))))
+      const host = location.hostname.toLowerCase()
+      if (host.includes('youtube.com')) return
+
+      // 2. 字幕面板最多 2 个（NDM: this.aa++; if(2<this.aa) return）
+      // 3. YouTube 页面不显示字幕（NDM: if(host.indexOf("youtube.")>=0) return）
+      let subtitlePanelCount = 0
+      for (const item of mediaItems) {
+        if (item.ext && /^(?:vtt|srt)$/i.test(item.ext)) {
+          if (host.includes('youtube.')) continue
+          subtitlePanelCount++
+          if (subtitlePanelCount > 2) break
+        }
+      }
+      const filteredItems = mediaItems.filter((item) => {
+        if (item.ext && /^(?:vtt|srt)$/i.test(item.ext)) {
+          if (host.includes('youtube.')) return false
+          let seenSubtitles = 0
+          for (const m of mediaItems) {
+            if (m.ext && /^(?:vtt|srt)$/i.test(m.ext)) {
+              seenSubtitles++
+              if (m.id === item.id) return seenSubtitles <= 2
+            }
+          }
+        }
+        // === NDM M.G() 第 3 个过滤: 大站点 + 非 VTT + 文件 ≤ 5MB → 不显示面板 ===
+        // NDM: f = fromBackground && /.*facebook.com$|.*vimeo.com$|.*youtube.com$/i.test(host)
+        //       && !(fEx=="VTT") && !(!fS || fS > 5242880)
+        // 即: facebook/vimeo/youtube 上, 非 VTT 且 size ≤ 5MB (或无 size) 的后台推送项不显示
+        // 原因: 大站点有大量小媒体资源 (缩略图/短音频等), 只显示 > 5MB 的大文件
+        const isBigSite = /(?:facebook|vimeo|youtube)\.com$/i.test(host)
+        if (isBigSite && item.ext && !/^(?:vtt|srt)$/i.test(item.ext)) {
+          if (!item.size || item.size <= 5242880) return false
+        }
+        return true
+      })
+
       // 记录已分配的 item ID
       const assignedIds = new Set<string>()
       for (const panel of panels.values()) {
@@ -999,7 +1038,7 @@ export default defineContentScript({
       }
 
       // 为每条新 item 找 video 元素，分配到对应 panel
-      for (const item of mediaItems) {
+      for (const item of filteredItems) {
         if (assignedIds.has(item.id)) continue
         // task #1: 元素命中检测
         const video = findPlayerElement(item.url, location.href)

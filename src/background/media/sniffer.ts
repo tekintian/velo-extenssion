@@ -65,9 +65,6 @@ const HLS_STREAMING_EXT_RE = /^(?:F4F|MPEGTS|TS|MP2T)$/i
  */
 const REDIRECT_STATUS_CODES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308])
 
-/** 跳过的 URL 文件名片段（manifest / favicon 等） */
-const SKIP_URL_FRAGMENTS = ['manif', 'favicon.ico', 'pem.msg', '.wasm', '.json', '.dict']
-
 /**
  * webRequest URL 过滤器（移植自 NDM bg.js）
  *
@@ -350,15 +347,30 @@ export function startSniffer(): void {
         // 例：URL 无后缀但 CT=application/pdf → ext=pdf
         const extFromCT = extFromContentType(contentType)
 
-        // === NDM bg.js 扩展名优先级：MIME > CD > URL ===
-        // NDM: b.g = b.O || b.P || b.s
-        // 其中 b.O = MIME 表反查首个扩展名, b.P = CD filename 的扩展名, b.s = URL 路径的扩展名
-        // 修复：之前 velo 用 CD > URL > MIME 优先级，与 NDM 不一致
+        // === 扩展名优先级：对齐 adclear_v6 (CD > URL)，MIME 仅作补充 ===
+        // NDM 原版: b.g = b.O || b.P || b.s (MIME > CD > URL)
+        // 但 MIME 优先对 m3u8 有致命问题：video/mp2t 映射到 TS|M3U8，
+        // extFromContentType 返回 'ts'，导致 .m3u8 URL 被当作 TS 分片跳过。
+        // adclear_v6 实际使用 CD > URL 优先级（不含 MIME），m3u8 始终正确识别。
+        // 修复：URL 扩展名为 m3u8/m3u 时强制优先（这是 m3u8 检测最可靠的信号），
+        // 其他情况仍用 MIME > CD > URL 优先级（对齐 NDM 原版）。
         const extFromCD = fileNameFromCD ? getExt(fileNameFromCD) : ''
         const extFromUrl = getExt(urlFileName)
-        const ext = extFromCT || extFromCD || extFromUrl
+        const isPlaylistUrlExt = /^(?:m3u8|m3u)$/i.test(extFromUrl)
+        const ext = isPlaylistUrlExt ? extFromUrl : (extFromCT || extFromCD || extFromUrl)
 
-        if (SKIP_URL_FRAGMENTS.some((f) => urlPath.toLowerCase().includes(f))) {
+        // NDM shouldSkip 检查文件名末段 (req.l)，不是整个 pathname
+        // 例：/json-assets/video.mp4 → urlFileName="video.mp4" → 不包含 ".json" → 跳过条件不命中
+        // 例：/data.json → urlFileName="data.json" → 包含 ".json" → 命中跳过条件
+        const lowerFileName = urlFileName.toLowerCase()
+        if (
+          lowerFileName.includes('manif') ||
+          lowerFileName.includes('favicon.ico') ||
+          lowerFileName.includes('pem.msg') ||
+          lowerFileName.endsWith('.wasm') ||
+          lowerFileName.includes('.json') ||
+          lowerFileName.endsWith('.dict')
+        ) {
           pendingRequests.delete(details.requestId)
           return undefined
         }
@@ -427,7 +439,8 @@ export function startSniffer(): void {
         //   ca = 非下载扩展名
         const isMainFrame = pending.resourceType === 'main_frame'
         const isSubFrame = pending.resourceType === 'sub_frame'
-        const isFrame = isMainFrame || isSubFrame
+        // NDM req.R = O(f, "_frame") — resourceType 以 _frame 结尾，仅 sub_frame，不含 main_frame
+        const isFrameOnly = isSubFrame
         const isStandardSniffType = ['object', 'xmlhttprequest', 'media', 'other'].includes(pending.resourceType)
         const isSubtitle = ext && /^(?:vtt|srt)$/i.test(ext)
         const isJsTxtDict = ext && /^(?:js|txt|dict)$/i.test(ext)
@@ -437,10 +450,10 @@ export function startSniffer(): void {
         const condMainFrameMedia = isMainFrame && isMediaExt && !isHlsSegment
         // NDM 条件 2: other 类型 + 媒体扩展名
         const condOtherMedia = pending.resourceType === 'other' && isMediaExt
-        // NDM 条件 3: (frame 或 非标准类型) + da 扩展名
-        const condFrameDa = (isFrame || !isStandardSniffType) && isDaExt
-        // NDM 条件 4: (frame 或 other) + (字幕非js/txt/dict 或 强制下载CT 或 未知扩展名)
-        const condFrameMisc = (isFrame || pending.resourceType === 'other') && (
+        // NDM 条件 3: (仅 sub_frame 或 非标准类型) + da 扩展名 — NDM req.R 仅含 sub_frame
+        const condFrameDa = (isFrameOnly || !isStandardSniffType) && isDaExt
+        // NDM 条件 4: (仅 sub_frame 或 other) + (字幕非js/txt/dict 或 强制下载CT 或 未知扩展名) — NDM req.R 仅含 sub_frame
+        const condFrameMisc = (isFrameOnly || pending.resourceType === 'other') && (
           (isSubtitle && !isJsTxtDict) || isForceDownloadCT || isUnknownExt
         )
 
@@ -648,8 +661,10 @@ export function startSniffer(): void {
         // NDM: `(!b["7"] || 512E3 < b["7"] || k)` — 媒体 < 512KB 不嗅探（字幕 k 除外）
         // 避免嗅探页面内嵌的短音频（如 UI 音效、提示音）等无意义的小媒体
         // NDM: `!("ASF" == b.g && 256E4 >= b["7"])` — ASF 且 < 2.5MB 也不嗅探
+        // **关键豁免**: m3u8/m3u 播放列表通常只有几KB，必须始终嗅探，否则 HLS 广告过滤完全失效
         const isSubtitleExt = ext && /^(?:vtt|srt)$/i.test(ext)
-        if (isMediaExt && !isSubtitleExt && size > 0 && size < 512 * 1024) {
+        const isPlaylistExt = ext && /^(?:m3u8|m3u)$/i.test(ext)
+        if (isMediaExt && !isSubtitleExt && !isPlaylistExt && size > 0 && size < 512 * 1024) {
           logger.debug('[sniffer] media too small, skipping:', ext, size, 'bytes, url:', pending.url.slice(0, 80))
           pendingRequests.delete(details.requestId)
           return undefined
@@ -739,10 +754,12 @@ export function startSniffer(): void {
     } catch { /* ignore */ }
   })
 
-  // webNavigation.onHistoryStateUpdated — SPA 路由变化时清理旧媒体项、递增代际号并通知 player-panel 刷新
+  // webNavigation.onHistoryStateUpdated — SPA 路由变化时递增代际号 + 通知 player-panel 刷新
+  // NDM bg.js V.onHistoryStateUpdated 只发消息给 content script (port[11, url])，
+  // 不碰 background 的媒体数据。让 panel 自己决定何时清面板 (pageUrlChanged 收到后 destroyPanel)。
+  // tabMediaMap 由 player-panel 重新从 background 拉取 (3s 轮询)，不清 background 数据避免竞态丢失。
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.tabId >= 0) {
-      tabMediaMap.delete(details.tabId)
       const prevGen = tabGenerationMap.get(details.tabId) ?? 0
       tabGenerationMap.set(details.tabId, prevGen + 1)
       logger.info('[sniffer] SPA navigation: tabId:', details.tabId, 'generation:', prevGen, '→', prevGen + 1)
@@ -1325,34 +1342,50 @@ function getUrlPathPrefix(url: string, segments: number): string {
  *   1. 标准 video/* Content-Type (video/mp4, video/webm 等)
  *   2. 扩展名 m4s 且 URL 含 video 路径/域名关键字（排除 bilivideo.com 等误匹配）
  */
-function isDashVideoCT(ct: string, ext?: string, url?: string): boolean {
-  if (/^video\/(mp4|mp2t|webm|iso\.mp4)/i.test(ct)) return true
-  if (ext && url && /^m4s$/i.test(ext) && /(?:playvideo|video\/)/i.test(url)) return true
-  return false
-}
-
-/**
- * 判断 Content-Type 是否为 DASH 音频轨
- *
- * 匹配规则（按优先级）:
- *   1. 标准 audio/* Content-Type (audio/mp4, audio/aac 等)
- *   2. 扩展名 m4s 且 URL 含 audio 路径/域名关键字（排除 biliaudio 等误匹配）
- */
-function isDashAudioCT(ct: string, ext?: string, url?: string): boolean {
-  if (/^audio\/(mp4|mp2t|webm|aac|opus|iso\.mp4)/i.test(ct)) return true
-  if (ext && url && /^m4s$/i.test(ext) && /(?:playaudio|audio\/)/i.test(url)) return true
-  return false
-}
-
 /**
  * 判断是否为 DASH 候选项（可能是 video 或 audio 轨）
  *
- * 综合判断：Content-Type 匹配 或 扩展名为 m4s（DASH 协议标志性扩展名）
+ * 严格判定：只有真正具备 DASH 协议特征的媒体才进入配对池。
+ * 普通音视频文件（.mp4/.m4a/.mp3）和 HLS 分片（.ts/.m3u8）不参与配对。
+ *
+ * DASH 协议特征：
+ *   1. 扩展名为 m4s — DASH CMAF (Common Media Application Format) 分片的标志性扩展名
+ *   2. URL 明确含 DASH 特征（如 YouTube /videoplayback?itag=XXX）
  */
 function isDashCandidate(item: MediaItem): boolean {
-  const ct = item.contentType
-  if (isDashVideoCT(ct, item.ext, item.url) || isDashAudioCT(ct, item.ext, item.url)) return true
-  if (/^m4s$/i.test(item.ext)) return true
+  const ext = item.ext
+  const url = item.url
+  // m4s 扩展名 — DASH CMAF 分片的标志性扩展名
+  if (/^m4s$/i.test(ext)) return true
+  // YouTube DASH /videoplayback — 独立 .webm/.mp4 分片但 URL 明确带 itag
+  if (url && /videoplayback/i.test(url) && /itag=\d+/i.test(url)) return true
+  return false
+}
+
+/**
+ * 判断 DASH 候选项的角色是否为 video 轨
+ *
+ * 仅在 isDashCandidate 为 true 的前提下调用。
+ * 通过 CT 区分音视频角色（B 站 m4s 的 CT 是 video/mp4 或 audio/mp4）。
+ * 注意：独立 .mp4 文件不经过此函数（isDashCandidate 已排除）。
+ */
+function isDashVideoCT(ct: string, ext?: string, url?: string): boolean {
+  if (/^video\/(mp4|webm|iso\.mp4)$/i.test(ct)) return true
+  // m4s + URL 含 video 路径关键字
+  if (ext && url && /^m4s$/i.test(ext) && /playvideo|video\//i.test(url)) return true
+  return false
+}
+
+/**
+ * 判断 DASH 候选项的角色是否为 audio 轨
+ *
+ * 仅在 isDashCandidate 为 true 的前提下调用。
+ * 通过 CT 区分音视频角色。独立 .m4a/.mp3 不经过此函数。
+ */
+function isDashAudioCT(ct: string, ext?: string, url?: string): boolean {
+  if (/^audio\/(mp4|webm|aac|opus|iso\.mp4)$/i.test(ct)) return true
+  // m4s + URL 含 audio 路径关键字
+  if (ext && url && /^m4s$/i.test(ext) && /playaudio|audio\//i.test(url)) return true
   return false
 }
 

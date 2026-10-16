@@ -18,6 +18,7 @@
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
+import { i18n } from '@/lib/i18n'
 
 const BADGE_ID = '__adclear_hls_badge__'
 const STYLE_ID = '__adclear_hls_badge_style__'
@@ -25,6 +26,59 @@ const TOAST_ID = '__adclear_adskip_toast'
 const DL_BTN_ID = '__adclear_dl_btn'
 const FADE_MS = 12000
 const VISIBLE_MS = 6000
+
+const BAD_TITLE_RE =
+  /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|h5\s*player|web\s*player|online\s*player|online|play|index\.html|home\.html|main\.html|default\.html|404|500|error|not\s*found|loading|正在加载|加载中|页面加载中|new\s*tab|新标签页|无标题|无标题文档|untitled|unknown|test|demo|sample|example|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|tempfile|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
+
+function resolveBadgeFileName(): string | undefined {
+  function isMeaningful(name: string | null | undefined): boolean {
+    if (!name) return false
+    const trimmed = name.trim()
+    if (!trimmed) return false
+    if (trimmed.length < 3) return false
+    if (BAD_TITLE_RE.test(trimmed)) return false
+    if (!/[\u4e00-\u9fa5a-zA-Z0-9]/.test(trimmed)) return false
+    return true
+  }
+  function sanitize(n: string): string {
+    return n.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/_{2,}/g, '_').trim().slice(0, 200)
+  }
+  const og = document.querySelector('meta[property="og:title"]') as HTMLMetaElement | null
+  if (og?.content?.trim()) {
+    const t = sanitize(og.content.trim())
+    if (isMeaningful(t)) return t
+  }
+  let title = document.title.trim()
+  if (title) {
+    title = title
+      .replace(/[-_]\s*哔哩哔哩_bilibili$/i, '')
+      .replace(/[-_]\s*bilibili$/i, '')
+      .replace(/[-_]\s*哔哩哔哩$/i, '')
+      .replace(/\s*[-–—]\s*YouTube$/i, '')
+      .replace(/\s*[-–—]\s*爱奇艺$/i, '')
+      .replace(/\s*[-_]\s*优酷.*$/i, '')
+      .replace(/\s*[-_]\s*腾讯视频.*$/i, '')
+      .replace(/\s*[-_]\s*西瓜视频.*$/i, '')
+      .replace(/\s*[-_]\s*抖音.*$/i, '')
+    title = sanitize(title)
+    if (isMeaningful(title)) return title
+  }
+  try {
+    const u = new URL(location.href)
+    const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+    const meaningful = segs
+      .map((s) => s.replace(/\.[^.]+$/, ''))
+      .filter((s) => s.length >= 3 && !BAD_TITLE_RE.test(s))
+    let name = meaningful.join('_')
+    if (!name) {
+      const fallback = segs.map((s) => s.replace(/\.[^.]+$/, '')).filter((s) => !BAD_TITLE_RE.test(s))
+      name = fallback.join('_') || u.hostname.replace(/^www\./, '')
+    }
+    return sanitize(name)
+  } catch {
+    return undefined
+  }
+}
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -75,9 +129,8 @@ export default defineContentScript({
         if (msg.adRanges && (msg.adRanges as unknown[]).length > 0) {
           setupAdSkipper(msg.adRanges as Array<{ start: number; end: number; duration: number }>)
         }
-        // 有 baseName 时显示下载按钮（即使无广告也显示，用户可下载清洗后的 m3u8）
         if (msg.baseName) {
-          const displayName = msg.pageTitle || msg.baseName
+          const displayName = resolveBadgeFileName() ?? msg.pageTitle ?? msg.baseName
           showDownloadButton(displayName, (msg.report as { ads?: number } | undefined)?.ads ?? 0)
         }
       }
@@ -253,25 +306,25 @@ export default defineContentScript({
             'padding:8px 14px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;' +
             'transition:opacity .3s;opacity:0;user-select:none;'
           btn.addEventListener('click', async () => {
-            btn!.textContent = '⏬ 下载中...'
+            btn!.textContent = '⏬ ' + i18n('badge_downloading')
             try {
-              // content script 不能用 chrome.tabs.query，通过 background 获取 tabId
               const tabResp = (await chrome.runtime.sendMessage({ type: 'getCurrentTabId' })) as { tabId?: number }
+              const fileName = resolveBadgeFileName()
               const r = (await chrome.runtime.sendMessage({
                 type: 'downloadCleanedM3u8',
-                payload: { tabId: tabResp?.tabId ?? 0, fileName: document.title.replace(/[\\/:*?"<>|]/g, '_').replace(/[-_]\s*哔哩哔哩_bilibili$/i, '').replace(/[-_]\s*bilibili$/i, '').replace(/[-_]\s*哔哩哔哩$/i, '').trim() || undefined },
+                payload: { tabId: tabResp?.tabId ?? 0, fileName: fileName || undefined },
               })) as { ok: boolean; filename?: string; error?: string }
               if (r.ok) {
-                btn!.textContent = '✓ 已下载 ' + (r.filename ?? 'cleaned.m3u8')
+                btn!.textContent = '✓ ' + i18n('badge_downloaded') + ' ' + (r.filename ?? 'cleaned.m3u8')
                 btn!.style.background = '#0f766e'
                 setTimeout(() => {
                   btn!.style.opacity = '0'
                 }, 3000)
               } else {
-                btn!.textContent = '✗ ' + (r.error ?? '下载失败')
+                btn!.textContent = '✗ ' + (r.error ?? i18n('badge_download_failed'))
                 btn!.style.background = '#dc2626'
                 setTimeout(() => {
-                  btn!.textContent = '📥 下载去广告 m3u8'
+                  btn!.textContent = '📥 ' + i18n('badge_download_m3u8')
                   btn!.style.background = '#059669'
                 }, 2500)
               }
@@ -281,7 +334,7 @@ export default defineContentScript({
           })
           ;(document.body ?? document.documentElement).appendChild(btn)
         }
-        btn.textContent = '📥 下载去广告 m3u8' + (adCount > 0 ? ` (${adCount} 广告已过滤)` : '') + '\n📁 ' + displayName + '_cleaned.m3u8'
+        btn.textContent = i18n('badge_download_m3u8') + (adCount > 0 ? ` (${i18n('badge_ad_filtered', String(adCount))})` : '') + '\n📁 ' + displayName + '_cleaned.m3u8'
         btn.style.whiteSpace = 'pre-line'
         btn.style.background = '#059669'
         btn.style.opacity = '1'
@@ -298,13 +351,13 @@ export default defineContentScript({
       el.id = BADGE_ID
       el.innerHTML = `
         <div class="b-hd">
-          <div class="b-title"><span class="b-dot"></span><span>AdClear 广告过滤</span></div>
-          <span class="b-close" title="关闭">×</span>
+          <div class="b-title"><span class="b-dot"></span><span>${i18n('badge_title')}</span></div>
+          <span class="b-close" title="${i18n('badge_close')}">×</span>
         </div>
         <div class="b-body">
-          <div class="b-row"><span>已过滤广告分片</span><b class="b-ads">0</b></div>
-          <div class="b-row"><span>广告时长</span><b class="b-adv">0s</b></div>
-          <div class="b-row"><span>内容时长</span><b class="b-cv">0s</b></div>
+          <div class="b-row"><span>${i18n('badge_ad_segments')}</span><b class="b-ads">0</b></div>
+          <div class="b-row"><span>${i18n('badge_ad_duration')}</span><b class="b-adv">0s</b></div>
+          <div class="b-row"><span>${i18n('badge_content_duration')}</span><b class="b-cv">0s</b></div>
           <div class="b-rule" style="display:none"></div>
         </div>
       `
@@ -386,7 +439,7 @@ export default defineContentScript({
       if (ruleEl) {
         if (s.ruleName && s.reports > 0) {
           ruleEl.style.display = ''
-          ruleEl.textContent = `命中规则: ${s.ruleName}`
+          ruleEl.textContent = `${i18n('badge_matched_rule')}: ${s.ruleName}`
         } else {
           ruleEl.style.display = 'none'
         }

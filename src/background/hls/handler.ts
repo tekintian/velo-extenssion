@@ -542,7 +542,7 @@ export async function persistCleanedContext(tabId: number, ctx: CleanedContext):
 }
 
 /** 加载 cleaned m3u8 上下文 */
-async function loadCleanedContext(tabId: number): Promise<CleanedContext | null> {
+export async function loadCleanedContext(tabId: number): Promise<CleanedContext | null> {
   try {
     const all = (await persistentStorage.get<Record<string, CleanedContext>>(CLEANED_KEY)) ?? {}
     return all[String(tabId)] ?? null

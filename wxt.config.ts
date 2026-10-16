@@ -89,6 +89,7 @@ export default defineConfig({
       'notifications',
       'activeTab',
       'downloads',
+      'tabs',
     ],
 
     host_permissions: [
