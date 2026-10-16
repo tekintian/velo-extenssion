@@ -32,8 +32,7 @@
  */
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
-import { logger } from '@/lib/logger'
-import { sendMessageFireAndForget } from '@/lib/runtime'
+import { sendMessageFireAndForget, isContextValid } from '@/lib/runtime'
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -41,38 +40,28 @@ export default defineContentScript({
   runAt: 'document_start',
 
   main() {
-    // capture: true — 在捕获阶段监听，比页面脚本更早收到事件
-    // 否则页面 stopPropagation 会让我们错过
-    window.addEventListener(
-      'keydown',
-      (event) => {
-        if (event.keyCode === 46) {
-          sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: true } })
-        }
-      },
-      true,
-    )
+    if (!isContextValid()) return
 
-    window.addEventListener(
-      'keyup',
-      (event) => {
-        if (event.keyCode === 46) {
-          sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
-        }
-      },
-      true,
-    )
-
-    // 页面失焦时（切到其他 tab/窗口）重置状态，防止 keyup 事件丢失导致状态卡死
-    window.addEventListener('blur', () => {
+    const onDeleteKeyDown = () => {
+      sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: true } })
+    }
+    const onDeleteKeyUp = () => {
       sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
+    }
+    const onDeleteReset = () => {
+      sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
+    }
+
+    window.addEventListener('keydown', (event) => {
+      if (event.keyCode === 46) onDeleteKeyDown()
     }, true)
 
-    // 页面卸载时也重置（用户关闭 tab 前按了 Delete）
-    window.addEventListener('beforeunload', () => {
-      sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
+    window.addEventListener('keyup', (event) => {
+      if (event.keyCode === 46) onDeleteKeyUp()
     }, true)
 
-    logger.info('[delete-key cs] Delete key listener installed')
+    window.addEventListener('blur', onDeleteReset, true)
+
+    window.addEventListener('beforeunload', onDeleteReset, true)
   },
 })

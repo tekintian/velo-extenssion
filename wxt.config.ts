@@ -69,6 +69,14 @@ export default defineConfig({
     },
     build: {
       target: 'chrome116',
+      // 禁用 Vite modulepreload polyfill。
+      // 该 polyfill 生成 __vitePreload 辅助函数，内部引用 document.querySelector /
+      // document.createElement / document.head.appendChild 等 DOM API。
+      // Service Worker 无 DOM 全局对象，V8 解析阶段即抛出
+      // "Uncaught ReferenceError: document is not defined"，
+      // 导致 Service Worker 注册失败（Status code: 15）。
+      // 设为 false 后 Vite 不注入此 polyfill，background.js 不再包含 DOM 引用。
+      modulePreload: false,
     },
   }) as never,
 
