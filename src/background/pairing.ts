@@ -47,6 +47,7 @@ export class PairingManager {
             version: PROTOCOL_VERSION,
             action: 'handshake',
             token,
+            options: { merge_format: '' },
           }
           ws.send(JSON.stringify(handshake))
         }
@@ -121,6 +122,7 @@ export class PairingManager {
           version: PROTOCOL_VERSION,
           action: 'handshake',
           token: '',
+          options: { merge_format: '' },
         }
         ws.send(JSON.stringify(handshake))
       }

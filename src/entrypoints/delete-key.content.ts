@@ -33,6 +33,7 @@
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
+import { sendMessageFireAndForget } from '@/lib/runtime'
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -45,13 +46,8 @@ export default defineContentScript({
     window.addEventListener(
       'keydown',
       (event) => {
-        // 46 = Delete 键 keyCode（NDM 原版用 keyCode 而非 key）
         if (event.keyCode === 46) {
-          void chrome.runtime
-            .sendMessage({ type: 'deleteKeyStateChanged', payload: { pressed: true } })
-            .catch(() => {
-              // background SW 可能未就绪，忽略
-            })
+          sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: true } })
         }
       },
       true,
@@ -61,11 +57,7 @@ export default defineContentScript({
       'keyup',
       (event) => {
         if (event.keyCode === 46) {
-          void chrome.runtime
-            .sendMessage({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
-            .catch(() => {
-              // ignore
-            })
+          sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
         }
       },
       true,
@@ -73,16 +65,12 @@ export default defineContentScript({
 
     // 页面失焦时（切到其他 tab/窗口）重置状态，防止 keyup 事件丢失导致状态卡死
     window.addEventListener('blur', () => {
-      void chrome.runtime
-        .sendMessage({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
-        .catch(() => {})
+      sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
     }, true)
 
     // 页面卸载时也重置（用户关闭 tab 前按了 Delete）
     window.addEventListener('beforeunload', () => {
-      void chrome.runtime
-        .sendMessage({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
-        .catch(() => {})
+      sendMessageFireAndForget({ type: 'deleteKeyStateChanged', payload: { pressed: false } })
     }, true)
 
     logger.info('[delete-key cs] Delete key listener installed')

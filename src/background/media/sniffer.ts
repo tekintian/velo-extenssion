@@ -353,11 +353,14 @@ export function startSniffer(): void {
         // extFromContentType 返回 'ts'，导致 .m3u8 URL 被当作 TS 分片跳过。
         // adclear_v6 实际使用 CD > URL 优先级（不含 MIME），m3u8 始终正确识别。
         // 修复：URL 扩展名为 m3u8/m3u 时强制优先（这是 m3u8 检测最可靠的信号），
+        // URL 扩展名为 m4s 时也强制优先（m4s 是 DASH CMAF 标志性扩展名，
+        // CT 返回 video/mp4 会丢失 DASH 协议特征，导致 DASH 配对判定失败），
         // 其他情况仍用 MIME > CD > URL 优先级（对齐 NDM 原版）。
         const extFromCD = fileNameFromCD ? getExt(fileNameFromCD) : ''
         const extFromUrl = getExt(urlFileName)
         const isPlaylistUrlExt = /^(?:m3u8|m3u)$/i.test(extFromUrl)
-        const ext = isPlaylistUrlExt ? extFromUrl : (extFromCT || extFromCD || extFromUrl)
+        const isDashUrlExt = /^m4s$/i.test(extFromUrl)
+        const ext = (isPlaylistUrlExt || isDashUrlExt) ? extFromUrl : (extFromCT || extFromCD || extFromUrl)
 
         // NDM shouldSkip 检查文件名末段 (req.l)，不是整个 pathname
         // 例：/json-assets/video.mp4 → urlFileName="video.mp4" → 不包含 ".json" → 跳过条件不命中
@@ -662,9 +665,12 @@ export function startSniffer(): void {
         // 避免嗅探页面内嵌的短音频（如 UI 音效、提示音）等无意义的小媒体
         // NDM: `!("ASF" == b.g && 256E4 >= b["7"])` — ASF 且 < 2.5MB 也不嗅探
         // **关键豁免**: m3u8/m3u 播放列表通常只有几KB，必须始终嗅探，否则 HLS 广告过滤完全失效
+        // **关键豁免**: m4s 是 DASH CMAF 标志性扩展名，B站等 audio m4s 可小至 100KB+，
+        //   跳过会导致 DASH 音视频配对缺少 audio 轨，AV 合并下载项消失
         const isSubtitleExt = ext && /^(?:vtt|srt)$/i.test(ext)
         const isPlaylistExt = ext && /^(?:m3u8|m3u)$/i.test(ext)
-        if (isMediaExt && !isSubtitleExt && !isPlaylistExt && size > 0 && size < 512 * 1024) {
+        const isDashSegExt = ext && /^m4s$/i.test(ext)
+        if (isMediaExt && !isSubtitleExt && !isPlaylistExt && !isDashSegExt && size > 0 && size < 512 * 1024) {
           logger.debug('[sniffer] media too small, skipping:', ext, size, 'bytes, url:', pending.url.slice(0, 80))
           pendingRequests.delete(details.requestId)
           return undefined
@@ -700,6 +706,7 @@ export function startSniffer(): void {
           detectedAt: Date.now(),
           requestBody: pending.requestBody,
           requestHeaders: pending.requestHeaders,
+          generation: pending.generation,
         }
 
         addMediaItem(pending.tabId, item)
@@ -777,13 +784,14 @@ export function startSniffer(): void {
     }
   })
 
-  // webNavigation.onHistoryStateUpdated — SPA 路由变化时清理旧媒体项、递增代际号并通知 player-panel 刷新
-  // 对齐 adclear_v6：SPA 路由变化时必须清理 tabMediaMap，否则 B站等 DASH 站点切换视频后
-  // 旧的 m4s video/audio 项残留，DASH 配对仍匹配到旧项，导致"文件名变了但实际文件还是原来的"
+  // webNavigation.onHistoryStateUpdated — SPA 路由变化时递增代际号并通知 player-panel 刷新
+  // **不再清空 tabMediaMap**：旧项保留在 map 中但标记为旧代际，pairDashItems/getMediaItems
+  //   通过 generation 过滤只返回当前代际的项。这避免了 SPA 导航后浏览器不重新请求
+  //   已缓存的 video m4s 导致只剩 1 个 audio 候选项无法配对的问题。
+  //   旧代际项在 getMediaItems 返回时被过滤掉，对用户不可见。
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.tabId >= 0) {
       const tabId = details.tabId
-      tabMediaMap.delete(tabId)
       const prevGen = tabGenerationMap.get(tabId) ?? 0
       tabGenerationMap.set(tabId, prevGen + 1)
       // SPA 路由变化 → 清理该 tab 的 HLS cleaned context（旧页面的 m3u8 不再有效）
@@ -1039,7 +1047,22 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
 }
 
 export function getMediaItems(tabId: number): MediaItem[] {
-  return tabMediaMap.get(tabId) ?? []
+  const items = tabMediaMap.get(tabId)
+  if (!items) return []
+  const currentGen = tabGenerationMap.get(tabId) ?? 0
+  // 过滤旧代际项：SPA 导航后旧代际项对用户不可见
+  // 延迟清理：仅当当前代际有新项时才清理旧项，避免 SPA 导航后新请求未到达时面板闪空
+  const currentGenItems = items.filter((item) => item.generation === undefined || item.generation >= currentGen)
+  if (currentGen > 0 && currentGenItems.length > 0) {
+    // 当前代际已有新项，可以安全清理旧代际项
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i]!
+      if (item.generation !== undefined && item.generation < currentGen) {
+        items.splice(i, 1)
+      }
+    }
+  }
+  return currentGenItems
 }
 
 export function clearMediaItems(tabId: number): void {
@@ -1096,6 +1119,7 @@ export function addMediaItemExternal(
     detectedAt: Date.now(),
     dashRole: options?.dashRole,
     dashGroupId: options?.dashGroupId,
+    generation: tabGenerationMap.get(tabId) ?? 0,
   }
   let list = tabMediaMap.get(tabId)
   if (!list) {
@@ -1405,9 +1429,9 @@ function isDashCandidate(item: MediaItem): boolean {
  * 注意：独立 .mp4 文件不经过此函数（isDashCandidate 已排除）。
  */
 function isDashVideoCT(ct: string, ext?: string, url?: string): boolean {
-  if (/^video\/(mp4|webm|iso\.mp4)$/i.test(ct)) return true
+  if (/^video\/(mp4|mp2t|webm|iso\.mp4)/i.test(ct)) return true
   // m4s + URL 含 video 路径关键字
-  if (ext && url && /^m4s$/i.test(ext) && /playvideo|video\//i.test(url)) return true
+  if (ext && url && /^m4s$/i.test(ext) && /(?:playvideo|video\/)/i.test(url)) return true
   return false
 }
 
@@ -1418,9 +1442,9 @@ function isDashVideoCT(ct: string, ext?: string, url?: string): boolean {
  * 通过 CT 区分音视频角色。独立 .m4a/.mp3 不经过此函数。
  */
 function isDashAudioCT(ct: string, ext?: string, url?: string): boolean {
-  if (/^audio\/(mp4|webm|aac|opus|iso\.mp4)$/i.test(ct)) return true
+  if (/^audio\/(mp4|mp2t|webm|aac|opus|iso\.mp4)/i.test(ct)) return true
   // m4s + URL 含 audio 路径关键字
-  if (ext && url && /^m4s$/i.test(ext) && /playaudio|audio\//i.test(url)) return true
+  if (ext && url && /^m4s$/i.test(ext) && /(?:playaudio|audio\/)/i.test(url)) return true
   return false
 }
 
@@ -1466,9 +1490,11 @@ export function pairDashItems(tabId: number): DashPair[] {
   const items = tabMediaMap.get(tabId)
   if (!items || items.length === 0) return []
 
-  // ── 阶段 1：筛选 DASH 候选项（已配对的跳过） ──────────────────────────
+  // ── 阶段 1：筛选 DASH 候选项（已配对的跳过，旧代际的跳过） ──────────────
+  const currentGen = tabGenerationMap.get(tabId) ?? 0
   const candidates = items.filter((item) => {
     if (item.dashGroupId) return false
+    if (item.generation !== undefined && item.generation < currentGen) return false
     return isDashCandidate(item)
   })
 

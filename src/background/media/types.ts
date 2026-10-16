@@ -37,6 +37,8 @@ export interface MediaItem {
   readonly dashRole?: DashRole | undefined
   /** DASH 配对组 ID（同一视频的音视频共享同一 groupId），配对后由 pairDashItems 设置 */
   readonly dashGroupId?: string | undefined
+  /** 页面代际号（SPA 路由变化时递增，用于过滤旧代际的过期项） */
+  readonly generation?: number | undefined
 }
 
 /** DASH 音视频配对组 */
