@@ -754,16 +754,51 @@ export function startSniffer(): void {
     } catch { /* ignore */ }
   })
 
+  // webNavigation.onCommitted — 全页面导航时清理该 tab 的 HLS cleaned context + 媒体列表
+  // 覆盖：地址栏输入、链接点击、前进后退、JS location 赋值等所有导航类型
+  // SPA pushState/replaceState 不触发 onCommitted，由下面的 onHistoryStateUpdated 处理
+  chrome.webNavigation.onCommitted.addListener((details) => {
+    if (details.tabId >= 0 && details.frameId === 0) {
+      const tabId = details.tabId
+      const prevGen = tabGenerationMap.get(tabId) ?? 0
+      tabGenerationMap.set(tabId, prevGen + 1)
+      tabMediaMap.delete(tabId)
+      void (async () => {
+        try {
+          const CLEANED_KEY = 'hlsLastCleaned'
+          const all = (await persistentStorage.get<Record<string, unknown>>(CLEANED_KEY)) ?? {}
+          if (String(tabId) in all) {
+            delete all[String(tabId)]
+            await persistentStorage.set(CLEANED_KEY, all)
+          }
+        } catch { /* ignore */ }
+      })()
+      logger.info('[sniffer] page navigation committed: tabId:', tabId, 'url:', details.url.slice(0, 80), 'generation:', prevGen, '→', prevGen + 1)
+    }
+  })
+
   // webNavigation.onHistoryStateUpdated — SPA 路由变化时递增代际号 + 通知 player-panel 刷新
   // NDM bg.js V.onHistoryStateUpdated 只发消息给 content script (port[11, url])，
   // 不碰 background 的媒体数据。让 panel 自己决定何时清面板 (pageUrlChanged 收到后 destroyPanel)。
   // tabMediaMap 由 player-panel 重新从 background 拉取 (3s 轮询)，不清 background 数据避免竞态丢失。
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.tabId >= 0) {
-      const prevGen = tabGenerationMap.get(details.tabId) ?? 0
-      tabGenerationMap.set(details.tabId, prevGen + 1)
-      logger.info('[sniffer] SPA navigation: tabId:', details.tabId, 'generation:', prevGen, '→', prevGen + 1)
-      void chrome.tabs.sendMessage(details.tabId, { type: 'pageUrlChanged', url: details.url }).catch(() => {})
+      const tabId = details.tabId
+      const prevGen = tabGenerationMap.get(tabId) ?? 0
+      tabGenerationMap.set(tabId, prevGen + 1)
+      // SPA 路由变化 → 清理该 tab 的 HLS cleaned context（旧页面的 m3u8 不再有效）
+      void (async () => {
+        try {
+          const CLEANED_KEY = 'hlsLastCleaned'
+          const all = (await persistentStorage.get<Record<string, unknown>>(CLEANED_KEY)) ?? {}
+          if (String(tabId) in all) {
+            delete all[String(tabId)]
+            await persistentStorage.set(CLEANED_KEY, all)
+          }
+        } catch { /* ignore */ }
+      })()
+      logger.info('[sniffer] SPA navigation: tabId:', tabId, 'generation:', prevGen, '→', prevGen + 1)
+      void chrome.tabs.sendMessage(tabId, { type: 'pageUrlChanged', url: details.url }).catch(() => {})
     }
   })
 

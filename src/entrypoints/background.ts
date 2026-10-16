@@ -293,13 +293,27 @@ async function tryAutoConnect(): Promise<ProbeResult & { connected?: boolean }> 
   }
   const result = await pairing.probeClient(probePorts)
   if (result.available) {
-    const token = result.tokenRequired ? (config.token ?? '') : ''
+    let token = ''
+    if (result.tokenRequired) {
+      // 客户端要求 token：优先用用户配置的 token，其次用已保存的 pairing token
+      token = config.token || (await pairing.getPairing())?.token || ''
+      if (!token) {
+        // 无可用 token → 用空 token 尝试握手，验证客户端是否实际需要 token
+        // 有些客户端 tokenRequired=true 但空 token 也能通过（宽松模式）
+        const valid = await pairing.validatePairing('', result.port)
+        if (!valid) {
+          logger.warn('Client requires token but none configured — skipping auto-connect. Please set token in settings.')
+          return { ...result, connected: false }
+        }
+        // 空 token 握手成功 → 继续用空 token 连接
+      }
+    }
     await pairing.savePairing(token, result.port)
     if (pushClient) pushClient.disconnect()
     pushClient = createPushClient(config.pushChannel, result.port, token)
     pushClient.connect()
     setPushClient(pushClient)
-    logger.info('Auto-connected to Velo client on port', result.port, 'tokenRequired:', result.tokenRequired)
+    logger.info('Auto-connected to Velo client on port', result.port, 'tokenRequired:', result.tokenRequired, 'token:', token ? '***' : '(empty)')
     return { ...result, connected: true }
   }
   logger.info('Velo client not detected, auto-connect skipped')

@@ -108,6 +108,14 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
   const HEARTBEAT_INTERVAL = 30000
   const PONG_TIMEOUT = 10000
 
+  let nextRequestId = 1
+  const pendingRequests = new Map<number, {
+    resolve: () => void
+    reject: (reason: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+  const PUSH_RESPONSE_TIMEOUT = 15000
+
   // === task #10: HTTP 推送通道状态 ===
   // HTTP 通道无持久连接，用周期性健康检查代替重连：
   //   - 启动时立即探活
@@ -119,6 +127,14 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
   const HEALTH_CHECK_INTERVAL = 30000
   const HTTP_PUSH_TIMEOUT = 8000
   let connectionFailureAlerted = false
+
+  function rejectAllPending(reason: string): void {
+    for (const [, pending] of pendingRequests) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error(reason))
+    }
+    pendingRequests.clear()
+  }
 
   function startHeartbeat(): void {
     stopHeartbeat()
@@ -185,13 +201,38 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data as string) as { ok?: boolean; error?: string; action?: string }
-        // P2: 收到任意消息即视为 pong，重置心跳超时
+        const data = JSON.parse(event.data as string) as {
+          ok?: boolean; error?: string; detail?: string; action?: string; request_id?: number
+        }
         if (awaitingPong) {
           awaitingPong = false
           if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
         }
-        logger.debug('WS message:', data.action ?? 'unknown')
+        // request-response: 匹配 pending push 请求
+        const rid = data.request_id
+        if (rid != null && pendingRequests.has(rid)) {
+          const pending = pendingRequests.get(rid)!
+          pendingRequests.delete(rid)
+          clearTimeout(pending.timer)
+          if (data.error) {
+            pending.reject(new Error(data.detail ?? data.error))
+          } else {
+            pending.resolve()
+          }
+          return
+        }
+        // 旧版桌面端不回 request_id：按 FIFO 匹配最早的 pending 请求
+        if (data.error && pendingRequests.size > 0) {
+          const firstEntry = pendingRequests.entries().next().value
+          if (firstEntry) {
+            const [firstId, firstPending] = firstEntry as [number, NonNullable<typeof pendingRequests extends Map<number, infer V> ? V : never>]
+            pendingRequests.delete(firstId)
+            clearTimeout(firstPending.timer)
+            firstPending.reject(new Error(data.detail ?? data.error))
+          }
+          return
+        }
+        logger.debug('WS message:', data.action ?? (data.ok ? 'ok' : 'unknown'))
       } catch { /* ignore */ }
     }
 
@@ -199,8 +240,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       logger.info('WebSocket closed')
       connected = false
       ws = null
-      stopHeartbeat()  // P2: 停止心跳
-      // T9.1: 标记 badge + 通知用户（仅在断开→通知一次）
+      stopHeartbeat()
+      rejectAllPending('WebSocket closed')
       setBadgeError()
       notifyDisconnected()
       scheduleReconnect()
@@ -305,7 +346,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
           signal: controller.signal,
         })
         if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
+          const body = await res.text().catch(() => '')
+          throw new Error(`HTTP ${res.status}: ${body}`)
         }
         logger.info('HTTP push sent:', message.action)
         // 推送成功 → 标记 connected（健康检查可能滞后）
@@ -415,8 +457,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       ws.close()
       ws = null
     }
+    rejectAllPending('Disconnected')
     connected = false
-    // 主动断开（如清除配对）不应保留 badge
     clearBadge()
     clearDisconnectNotification()
   }
@@ -441,8 +483,10 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     // 避免调用方在 message 里遗留的 token:'' 覆盖 closure 中的真实 token。
     // 历史 bug：pushHls/pushUrl/pushNormal 在 msg 里写 token:''，
     // 旧实现 {...token, ...message} 把 token 覆盖为 ''，导致桌面端鉴权失败。
-    const pushMsg: PushMessage = {
+    const requestId = nextRequestId++
+    const pushMsg = {
       ...message,
+      request_id: requestId,
       version: PROTOCOL_VERSION,
       token,
       action: (message.action as PushMessage['action']) ?? 'push_normal',
@@ -462,12 +506,20 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       return
     }
 
-    // === WS 通道 ===
+    // WS 通道: request-response 模式
     if (connected && ws?.readyState === WebSocket.OPEN) {
       try {
         ws.send(JSON.stringify(pushMsg))
-        logger.info('Push sent:', pushMsg.action)
-        return
+        logger.info('Push sent:', pushMsg.action, 'request_id:', requestId)
+        // 等待桌面端响应：成功 → resolve, 错误 → reject (触发 fallback), 超时 → resolve (兼容旧版)
+        return await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingRequests.delete(requestId)
+            logger.debug('Push response timeout (no error from server), assuming success:', pushMsg.action)
+            resolve()
+          }, PUSH_RESPONSE_TIMEOUT)
+          pendingRequests.set(requestId, { resolve, reject, timer })
+        })
       } catch (e) {
         logger.error('Push send failed:', (e as Error).message)
       }

@@ -117,10 +117,29 @@ export default defineContentScript({
       lastUpdate: number
     }
 
+    function destroyBadge(): void {
+      const el = document.getElementById(BADGE_ID)
+      if (el) el.remove()
+      const style = document.getElementById(STYLE_ID)
+      if (style) style.remove()
+      const btn = document.getElementById(DL_BTN_ID)
+      if (btn) btn.remove()
+      const toast = document.getElementById(TOAST_ID)
+      if (toast) toast.remove()
+      stats = null
+      dismissed = false
+      if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null }
+      if (visibleTimer) { clearTimeout(visibleTimer); visibleTimer = null }
+      adSkipState.ranges = []
+      adSkipState.skipping = false
+      adSkipState.inRuntimeAd = false
+      if (adSkipState.observer) { adSkipState.observer.disconnect(); adSkipState.observer = null }
+    }
+
     // 监听 background 消息
     chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
       if (!message || typeof message !== 'object') return false
-      const msg = message as { type?: string; report?: unknown; adRanges?: unknown; baseName?: string; pageTitle?: string }
+      const msg = message as { type?: string; report?: unknown; adRanges?: unknown; baseName?: string; pageTitle?: string; payload?: { visible?: boolean } }
       if (msg.type === 'hlsFilterReport') {
         handleReport(msg.report as { ads?: number; adDuration?: number; contentDuration?: number; appliedRule?: { name?: string } | null } | undefined)
       }
@@ -133,6 +152,19 @@ export default defineContentScript({
           const displayName = resolveBadgeFileName() ?? msg.pageTitle ?? msg.baseName
           showDownloadButton(displayName, (msg.report as { ads?: number } | undefined)?.ads ?? 0)
         }
+      }
+      // SPA 路由变化 → 销毁所有 badge UI，等待新页面的 m3u8 检测重新创建
+      if (msg.type === 'pageUrlChanged') {
+        destroyBadge()
+        return false
+      }
+      // 全局显隐切换
+      if (msg.type === 'veloVisibilityChanged') {
+        const visible = msg.payload?.visible
+        if (visible === false) {
+          destroyBadge()
+        }
+        return false
       }
       // 响应 popup 的播放状态查询（保存广告样本时需要 currentTime）
       if (msg.type === 'getPlayback') {

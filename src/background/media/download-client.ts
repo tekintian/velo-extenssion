@@ -923,7 +923,7 @@ export async function pushHls(
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
-  pushClientInstance.push(msg)
+  await pushClientInstance.push(msg)
 }
 
 /** 推送 URL 到 velo 桌面端 */
@@ -954,7 +954,7 @@ export async function pushUrl(
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
-  pushClientInstance.push(msg)
+  await pushClientInstance.push(msg)
 }
 
 /** 推送普通媒体到 velo 桌面端 */
@@ -983,5 +983,5 @@ export async function pushNormal(
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
-  pushClientInstance.push(msg)
+  await pushClientInstance.push(msg)
 }

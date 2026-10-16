@@ -29,7 +29,7 @@ import { captureSample, recordSample, autoLearnFromSample, listSamples, removeSa
 import { buildExport, applyImport } from '@/engine/hls/io'
 import { getLearnedCount, clearLearned } from '@/engine/hls/fingerprint'
 import { refreshRemoteRules } from '@/engine/hls/hls-rules'
-import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToVeloM3u8, materializeDataUrl } from '@/background/media/download-client'
+import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToVeloM3u8, materializeDataUrl, getPushClient, buildVeloHeaders } from '@/background/media/download-client'
 import { getMediaItems } from '@/background/media/sniffer'
 
 /** per-tab 最近清洗后的 m3u8 上下文（供下载按钮用） */
@@ -488,6 +488,34 @@ export function registerHlsHandlers(): void {
       logger.info('[resolveName]', debug)
 
       const m3u8OutName = `${friendlyName}_cleaned.m3u8`
+      const outputName = `${friendlyName}_noads.mp4`
+
+      // === PushClient 优先：已连接的 WebSocket 客户端直接推送，无需 data URL 编码 ===
+      // 对齐 sendToDownloadClient 的 pushClientInstance 优先逻辑
+      const pushClient = getPushClient()
+      if (pushClient) {
+        try {
+          const headers = buildVeloHeaders(downloadExtra)
+          const pushMsg = {
+            action: 'push_m3u8' as const,
+            url: ctx.baseUrl,
+            m3u8_text: ctx.cleaned,
+            base_url: ctx.baseUrl,
+            headers,
+            options: {
+              filename: outputName,
+              output_dir: undefined as string | undefined,
+              merge_format: 'mp4',
+              extra_headers: undefined as Record<string, string> | undefined,
+            },
+          }
+          await pushClient.push(pushMsg)
+          logger.info('[hls] pushed cleaned m3u8 via PushClient')
+          return { ok: true as const, filename: outputName }
+        } catch (e) {
+          logger.warn('[hls] PushClient push_m3u8 failed, falling back to cfg.client:', (e as Error).message)
+        }
+      }
 
       // 编码为 data URL 下载（不用 unescape，SW 环境可能无 unescape）
       const bytes = new TextEncoder().encode(ctx.cleaned)
@@ -509,19 +537,17 @@ export function registerHlsHandlers(): void {
 
       // NDM 模式：发 data URL 给 NDM WebSocket
       if (cfg.client === 'ndm') {
-        const outputName = `${friendlyName}_noads.mp4`
         const r = await sendToNdm(m3u8DataUrl, outputName, downloadExtra)
         return { ok: r.success as boolean, filename: outputName, ...(r.message ? { error: r.message } : {}) }
       }
 
       // velo 模式：直接推送 cleaned m3u8 文本（push_m3u8），无需 data URL 编码
       if (cfg.client === 'velo') {
-        const outputName = `${friendlyName}_noads.mp4`
         const r = await sendToVeloM3u8(ctx.cleaned, ctx.baseUrl, outputName, cfg, downloadExtra)
         return { ok: r.success as boolean, filename: outputName, ...(r.message ? { error: r.message } : {}) }
       }
 
-      // native 模式：浏览器原生下载
+      // native 模式：浏览器原生下载（仅在无 PushClient 且 cfg.client=native 时到达）
       const r = await sendToNative(m3u8DataUrl, m3u8OutName)
       return { ok: r.success as boolean, filename: m3u8OutName, ...(r.message ? { error: r.message } : {}) }
     } catch (e) {

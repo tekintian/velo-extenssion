@@ -61,6 +61,8 @@ export interface PushMessage {
   version: number
   token: string
   action: 'push_m3u8' | 'push_url' | 'push_file' | 'push_normal' | 'push_dash'
+  /** request-response 模式：桌面端在响应中回传此 ID，扩展匹配 pending 请求 */
+  request_id?: number
   m3u8_text?: string
   url?: string
   video_url?: string

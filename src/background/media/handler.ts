@@ -155,6 +155,19 @@ export function registerMediaHandlers(): void {
             logger.warn('[media] PushClient cleaned m3u8 push failed falling back:' + (e as Error).message)
           }
         }
+        if (cfg.client === 'aria2') {
+          const bytes = new TextEncoder().encode(cleanedCtx.cleaned)
+          let bin = ''
+          for (const b of bytes) bin += String.fromCharCode(b)
+          const b64 = btoa(bin)
+          const dataUrl = `data:application/vnd.apple.mpegurl;base64,${b64}`
+          const m3u8OutName = `${fileName || cleanedCtx.pageTitle || cleanedCtx.baseName || 'cleaned'}_cleaned.m3u8`
+          const { materializeDataUrl, sendToAria2 } = await import('./download-client')
+          const materialized = await materializeDataUrl(dataUrl, m3u8OutName)
+          if (!materialized.ok) return { success: false, message: materialized.error }
+          const r = await sendToAria2(materialized.fileUrl, `${fileName || cleanedCtx.pageTitle || 'cleaned'}_noads.ts`, cfg, downloadExtra, true)
+          return { success: r.success, message: r.message }
+        }
         if (cfg.client === 'velo') {
           const { sendToVeloM3u8 } = await import('./download-client')
           const r = await sendToVeloM3u8(cleanedCtx.cleaned, cleanedCtx.baseUrl, fileName || cleanedCtx.pageTitle, cfg, downloadExtra)
@@ -165,16 +178,17 @@ export function registerMediaHandlers(): void {
           let bin = ''
           for (const b of bytes) bin += String.fromCharCode(b)
           const b64 = btoa(bin)
-          const dataUrl = `data:application/vnd.apple.mpegurl;base64${b64}`
+          const dataUrl = `data:application/vnd.apple.mpegurl;base64,${b64}`
           const { sendToNdm } = await import('./download-client')
           const r = await sendToNdm(dataUrl, fileName || cleanedCtx.pageTitle, downloadExtra)
           return { success: r.success, message: r.message }
         }
+        // native 模式：浏览器原生下载（仅在无 PushClient 且 cfg.client=native 时到达）
         const bytes = new TextEncoder().encode(cleanedCtx.cleaned)
         let bin = ''
         for (const b of bytes) bin += String.fromCharCode(b)
         const b64 = btoa(bin)
-        const dataUrl = `data:application/vnd.apple.mpegurl;base64${b64}`
+        const dataUrl = `data:application/vnd.apple.mpegurl;base64,${b64}`
         chrome.downloads.download({ url: dataUrl, filename: `${fileName || cleanedCtx.pageTitle || 'cleaned'}_cleaned.m3u8`, saveAs: false })
         return { success: true }
       }
