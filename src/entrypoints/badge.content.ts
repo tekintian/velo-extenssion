@@ -19,6 +19,7 @@
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
+import { sendMessage, onMessageAddListener } from '@/lib/runtime'
 
 const BADGE_ID = '__adclear_hls_badge__'
 const STYLE_ID = '__adclear_hls_badge_style__'
@@ -137,7 +138,7 @@ export default defineContentScript({
     }
 
     // 监听 background 消息
-    chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+    onMessageAddListener((message: unknown, _sender, sendResponse) => {
       if (!message || typeof message !== 'object') return false
       const msg = message as { type?: string; report?: unknown; adRanges?: unknown; baseName?: string; pageTitle?: string; payload?: { visible?: boolean } }
       if (msg.type === 'hlsFilterReport') {
@@ -340,20 +341,20 @@ export default defineContentScript({
           btn.addEventListener('click', async () => {
             btn!.textContent = '⏬ ' + i18n('badge_downloading')
             try {
-              const tabResp = (await chrome.runtime.sendMessage({ type: 'getCurrentTabId' })) as { tabId?: number }
+              const tabResp = (await sendMessage<{ tabId?: number }>({ type: 'getCurrentTabId' }))
               const fileName = resolveBadgeFileName()
-              const r = (await chrome.runtime.sendMessage({
+              const r = await sendMessage<{ ok: boolean; filename?: string; error?: string }>({
                 type: 'downloadCleanedM3u8',
                 payload: { tabId: tabResp?.tabId ?? 0, fileName: fileName || undefined },
-              })) as { ok: boolean; filename?: string; error?: string }
-              if (r.ok) {
+              })
+              if (r?.ok) {
                 btn!.textContent = '✓ ' + i18n('badge_downloaded') + ' ' + (r.filename ?? 'cleaned.m3u8')
                 btn!.style.background = '#0f766e'
                 setTimeout(() => {
                   btn!.style.opacity = '0'
                 }, 3000)
               } else {
-                btn!.textContent = '✗ ' + (r.error ?? i18n('badge_download_failed'))
+                btn!.textContent = '✗ ' + (r?.error ?? i18n('badge_download_failed'))
                 btn!.style.background = '#dc2626'
                 setTimeout(() => {
                   btn!.textContent = '📥 ' + i18n('badge_download_m3u8')

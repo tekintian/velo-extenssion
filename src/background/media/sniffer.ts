@@ -1412,12 +1412,10 @@ function getUrlPathPrefix(url: string, segments: number): string {
  *   2. URL 明确含 DASH 特征（如 YouTube /videoplayback?itag=XXX）
  */
 function isDashCandidate(item: MediaItem): boolean {
-  const ext = item.ext
-  const url = item.url
-  // m4s 扩展名 — DASH CMAF 分片的标志性扩展名
-  if (/^m4s$/i.test(ext)) return true
-  // YouTube DASH /videoplayback — 独立 .webm/.mp4 分片但 URL 明确带 itag
-  if (url && /videoplayback/i.test(url) && /itag=\d+/i.test(url)) return true
+  const ct = item.contentType
+  if (isDashVideoCT(ct, item.ext, item.url) || isDashAudioCT(ct, item.ext, item.url)) return true
+  if (/^m4s$/i.test(item.ext)) return true
+  if (item.url && /videoplayback/i.test(item.url) && /itag=\d+/i.test(item.url)) return true
   return false
 }
 
@@ -1425,13 +1423,27 @@ function isDashCandidate(item: MediaItem): boolean {
  * 判断 DASH 候选项的角色是否为 video 轨
  *
  * 仅在 isDashCandidate 为 true 的前提下调用。
- * 通过 CT 区分音视频角色（B 站 m4s 的 CT 是 video/mp4 或 audio/mp4）。
+ * 通过 CT + URL quality ID 区分音视频角色。
  * 注意：独立 .mp4 文件不经过此函数（isDashCandidate 已排除）。
+ *
+ * B站 DASH quality ID 规则：
+ *   - 视频：100xxx（AV1）、200xxx（HEVC）、300xxx（AVC）
+ *   - 音频：30xxx（AAC/FLAC/杜比全景声）
+ *   URL 格式：.../{cid}-{qualityID}.m4s?...
  */
 function isDashVideoCT(ct: string, ext?: string, url?: string): boolean {
-  if (/^video\/(mp4|mp2t|webm|iso\.mp4)/i.test(ct)) return true
+  if (/^video\/(mp4|mp2t|webm|iso\.mp4)/i.test(ct)) {
+    // B站 m4s 全部返回 video/mp4，需进一步检查 URL 中的 quality ID
+    // 若 URL 含音频 quality ID (30xxx)，则 CT 的 video/mp4 是误判，应返回 false
+    if (ext && url && /^m4s$/i.test(ext) && isBilibiliAudioQualityId(url)) {
+      return false
+    }
+    return true
+  }
   // m4s + URL 含 video 路径关键字
   if (ext && url && /^m4s$/i.test(ext) && /(?:playvideo|video\/)/i.test(url)) return true
+  // m4s + URL 含 B站 视频 quality ID (100xxx/200xxx/300xxx)
+  if (ext && url && /^m4s$/i.test(ext) && isBilibiliVideoQualityId(url)) return true
   return false
 }
 
@@ -1439,13 +1451,52 @@ function isDashVideoCT(ct: string, ext?: string, url?: string): boolean {
  * 判断 DASH 候选项的角色是否为 audio 轨
  *
  * 仅在 isDashCandidate 为 true 的前提下调用。
- * 通过 CT 区分音视频角色。独立 .m4a/.mp3 不经过此函数。
+ * 通过 CT + URL quality ID 区分音视频角色。独立 .m4a/.mp3 不经过此函数。
+ *
+ * B站 DASH quality ID 规则：
+ *   - 音频：30280(HQ AAC)、30232(FLAC)、30216(杜比全景声) 等 30xxx
+ *   URL 格式：.../{cid}-{qualityID}.m4s?...
  */
 function isDashAudioCT(ct: string, ext?: string, url?: string): boolean {
   if (/^audio\/(mp4|mp2t|webm|aac|opus|iso\.mp4)/i.test(ct)) return true
   // m4s + URL 含 audio 路径关键字
   if (ext && url && /^m4s$/i.test(ext) && /(?:playaudio|audio\/)/i.test(url)) return true
+  // m4s + URL 含 B站 音频 quality ID (30xxx)
+  if (ext && url && /^m4s$/i.test(ext) && isBilibiliAudioQualityId(url)) return true
   return false
+}
+
+/**
+ * 检测 URL 中是否含 B站 视频 quality ID
+ *
+ * B站 DASH 视频 quality ID 范围：
+ *   - 100xxx: AV1 编码（如 100023=480P AV1, 100024=720P AV1, 100025=1080P AV1）
+ *   - 200xxx: HEVC 编码（如 200023=480P HEVC, 200024=720P HEVC）
+ *   - 300xxx: AVC 编码（如 300023=480P AVC, 300024=720P AVC）
+ *
+ * URL 格式示例：/upgcxcode/32/79/42651487932/42651487932-1-100023.m4s
+ */
+function isBilibiliVideoQualityId(url: string): boolean {
+  // 匹配 URL 路径中的 {cid}-{part}-{qualityID}.m4s 模式
+  const m = /(\d{3,})\.m4s/i.exec(url)
+  if (!m) return false
+  const qid = parseInt(m[1]!, 10)
+  return (qid >= 100000 && qid < 400000)
+}
+
+/**
+ * 检测 URL 中是否含 B站 音频 quality ID
+ *
+ * B站 DASH 音频 quality ID 范围：
+ *   - 30xxx: 所有音频 quality（30280=HQ AAC, 30232=FLAC, 30216=杜比全景声, 30250=Hi-Res）
+ *
+ * URL 格式示例：/upgcxcode/32/79/42651487932/42651487932-1-30280.m4s
+ */
+function isBilibiliAudioQualityId(url: string): boolean {
+  const m = /(\d{3,})\.m4s/i.exec(url)
+  if (!m) return false
+  const qid = parseInt(m[1]!, 10)
+  return (qid >= 30000 && qid < 40000)
 }
 
 /**
@@ -1507,28 +1558,54 @@ export function pairDashItems(tabId: number): DashPair[] {
     candidates.map((c) => ({ ext: c.ext, ct: c.contentType, size: c.size, url: c.url.slice(0, 60) })))
 
   // ── 阶段 2：按 CT/URL 关键字分类 video/audio，未分类项按大小启发式归类 ──
-  const videoItemsBase = candidates.filter((item) => isDashVideoCT(item.contentType, item.ext, item.url))
-  const audioItemsBase = candidates.filter((item) => isDashAudioCT(item.contentType, item.ext, item.url))
+  let videoItemsBase = candidates.filter((item) => isDashVideoCT(item.contentType, item.ext, item.url))
+  let audioItemsBase = candidates.filter((item) => isDashAudioCT(item.contentType, item.ext, item.url))
 
   // 对无法通过 CT/URL 区分角色的候选项，按大小启发式分类
-  const unclassified = candidates.filter(
+  let unclassified = candidates.filter(
     (item) => !videoItemsBase.includes(item) && !audioItemsBase.includes(item),
   )
+
+  // 同角色回退：当 CT 把所有候选项分为同一角色且无 unclassified 时
+  // （如 B站 m4s 全部 CT=video/mp4），视为 CT 无法区分角色，
+  // 全部降级为 unclassified 由 size 启发式重新分类
+  if (unclassified.length === 0 && videoItemsBase.length > 1 && audioItemsBase.length === 0) {
+    logger.info('[sniffer] DASH pair: all candidates classified as video by CT, falling back to size heuristic')
+    unclassified = [...videoItemsBase]
+    videoItemsBase = []
+    audioItemsBase = []
+  }
+  if (unclassified.length === 0 && audioItemsBase.length > 1 && videoItemsBase.length === 0) {
+    logger.info('[sniffer] DASH pair: all candidates classified as audio by CT, falling back to size heuristic')
+    unclassified = [...audioItemsBase]
+    videoItemsBase = []
+    audioItemsBase = []
+  }
   const videoItems = [...videoItemsBase]
   const audioItems = [...audioItemsBase]
   if (unclassified.length > 0) {
     logger.info('[sniffer] DASH pair: unclassified items:', unclassified.length,
       unclassified.map((u) => ({ size: u.size, url: u.url.slice(0, 60) })))
     // 按大小降序排列，最大的视为 video，其余视为 audio
+    // 额外安全检查：若候选项 URL 含视频 quality ID，不应被分类为 audio
     const sorted = [...unclassified].sort((a, b) => b.size - a.size)
     for (let i = 0; i < sorted.length; i++) {
       if (i === 0 && sorted.length > 1) {
         videoItems.push(sorted[i]!)
       } else {
-        audioItems.push(sorted[i]!)
+        // 安全检查：URL 含视频 quality ID 的候选项不应被当作 audio
+        if (sorted[i]!.url && isBilibiliVideoQualityId(sorted[i]!.url)) {
+          logger.warn('[sniffer] DASH pair: size heuristic classified item as audio, but URL contains video quality ID — skipping as audio candidate:', sorted[i]!.url.slice(0, 80))
+          videoItems.push(sorted[i]!)
+        } else {
+          audioItems.push(sorted[i]!)
+        }
       }
     }
   }
+
+  logger.info('[sniffer] DASH pair: classified video:', videoItems.length, 'audio:', audioItems.length,
+    'unclassified:', unclassified.length)
 
   if (videoItems.length === 0 || audioItems.length === 0) {
     logger.info('[sniffer] DASH pair: no video/audio pair possible, video:', videoItems.length, 'audio:', audioItems.length)

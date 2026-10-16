@@ -15,6 +15,7 @@
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
+import { sendMessage, onMessageAddListener } from '@/lib/runtime'
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -26,25 +27,23 @@ export default defineContentScript({
     logger.info('[AdClear HLS bridge] isolated world loaded, location:', location.href)
 
     // 启动时查询 HLS 委派状态，通知 MAIN world 是否应该 hook
-    try {
-      chrome.runtime.sendMessage({ type: 'getHlsDelegation' }).then((resp) => {
-        const r = resp as { mode?: string; reason?: string } | null
-        if (r?.mode === 'active') {
-          window.postMessage({ __adclear_hls_delegate: true, mode: 'active', reason: r.reason }, '*')
+    void (async () => {
+      try {
+        const resp = await sendMessage<{ mode?: string; reason?: string }>({ type: 'getHlsDelegation' })
+        if (resp?.mode === 'active') {
+          window.postMessage({ __adclear_hls_delegate: true, mode: 'active', reason: resp.reason }, '*')
           logger.info('[AdClear HLS bridge] delegation active, notified MAIN world')
         } else {
-          window.postMessage({ __adclear_hls_delegate: true, mode: 'delegated', reason: r?.reason }, '*')
-          logger.info('[AdClear HLS bridge] delegation delegated, reason:', r?.reason)
+          window.postMessage({ __adclear_hls_delegate: true, mode: 'delegated', reason: resp?.reason }, '*')
+          logger.info('[AdClear HLS bridge] delegation delegated, reason:', resp?.reason)
         }
-      }).catch((e) => {
+      } catch (e) {
         logger.warn('[AdClear HLS bridge] getHlsDelegation failed:', (e as Error).message)
-      })
-    } catch {
-      // ignore
-    }
+      }
+    })()
 
     // 监听委派状态变化（background 广播）
-    chrome.runtime.onMessage.addListener((message: unknown) => {
+    onMessageAddListener((message: unknown) => {
       if (!message || typeof message !== 'object') return false
       const msg = message as { type?: string; mode?: string; reason?: string }
       if (msg.type === 'hlsDelegationChanged') {
@@ -63,12 +62,12 @@ export default defineContentScript({
       if (data.source === 'velo-mse' && data.type) {
         try {
           if (data.type === 'mse-source-added') {
-            await chrome.runtime.sendMessage({
+            await sendMessage({
               type: 'velo-mse-source',
               payload: data.payload ?? {},
             })
           } else if (data.type === 'velo-mse-segment' || data.type === 'mse-segment-appended') {
-            await chrome.runtime.sendMessage({
+            await sendMessage({
               type: 'velo-mse-segment',
               payload: data.payload ?? {},
             })
@@ -85,7 +84,7 @@ export default defineContentScript({
       const reqId = data.__adclear
       logger.info('[AdClear HLS bridge] received processHlsPlaylist from MAIN, reqId:', reqId)
       try {
-        const response = await chrome.runtime.sendMessage({
+        const response = await sendMessage({
           type: 'processHlsPlaylist',
           payload: {
             text: data.text ?? '',

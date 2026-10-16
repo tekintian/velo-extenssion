@@ -35,6 +35,7 @@
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
+import { sendMessage } from '@/lib/runtime'
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -94,12 +95,11 @@ function scanYouTubeScripts(): void {
     if (text.indexOf('signatureCipher') >= 0) continue
 
     // 发送给 background 解析
-    void chrome.runtime.sendMessage({
+    void sendMessage<{ parsed?: boolean }>({
       type: 'parseYouTubeScriptFormats',
       payload: { scriptText: text },
     }).then((resp) => {
-      const r = resp as { parsed?: boolean } | null
-      if (r?.parsed) {
+      if (resp?.parsed) {
         logger.info('[site-sniffer cs] YouTube <script> formats parsed successfully')
       }
     }).catch((e) => {
@@ -149,12 +149,11 @@ function scanVimeoScripts(): void {
     const text = script.textContent ?? script.innerText ?? ''
     if (!text || !progressiveRe.test(text)) continue
 
-    void chrome.runtime.sendMessage({
+    void sendMessage<{ parsed?: boolean }>({
       type: 'parseVimeoScriptProgressive',
       payload: { scriptText: text },
     }).then((resp) => {
-      const r = resp as { parsed?: boolean } | null
-      if (r?.parsed) {
+      if (resp?.parsed) {
         logger.info('[site-sniffer cs] Vimeo <script> progressive parsed successfully')
       }
     }).catch((e) => {
@@ -233,7 +232,7 @@ function processFacebookLinks(root: HTMLElement | Document | null): void {
     logger.info('[site-sniffer cs] Facebook /videos/ link found: videoId=', videoId)
 
     // 发送给 background 调用 sniffFacebookEmbed（fetch embed HTML + 提取 sd_src/hd_src）
-    void chrome.runtime.sendMessage({
+    void sendMessage({
       type: 'sniffFacebookEmbed',
       payload: { videoId },
     }).catch((e) => {

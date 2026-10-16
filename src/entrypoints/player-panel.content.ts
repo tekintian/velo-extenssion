@@ -42,6 +42,7 @@
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 import { extractItagFromUrl, resolveItagLabel } from '@/background/media/youtube-itags'
+import { sendMessage, sendMessageFireAndForget, onMessageAddListener } from '@/lib/runtime'
 
 const PANEL_CLASS = '__velo_player_panel__'
 const STYLE_ID = '__velo_player_panel_style__'
@@ -691,14 +692,14 @@ export default defineContentScript({
           if (action === 'download-m3u8') {
             try {
               const pageTitle = panel.adFilterPageTitle || cleanPageTitle()
-              const r = (await chrome.runtime.sendMessage({
+              const r = await sendMessage<{ ok: boolean; filename?: string; error?: string }>({
                 type: 'downloadCleanedM3u8',
                 payload: { tabId: currentTabId, fileName: pageTitle },
-              })) as { ok: boolean; filename?: string; error?: string }
-              if (r.ok) {
+              })
+              if (r?.ok) {
                 showToast(`✓ 已开始下载 ${r.filename ?? 'cleaned.m3u8'}`, 'success')
               } else {
-                showToast(`下载失败: ${r.error ?? 'unknown'}`, 'error')
+                showToast(`下载失败: ${r?.error ?? 'unknown'}`, 'error')
               }
             } catch (err) {
               showToast(`下载失败: ${(err as Error).message}`, 'error')
@@ -712,7 +713,7 @@ export default defineContentScript({
             }
             try {
               const pageTitle = cleanPageTitle()
-              const r = (await chrome.runtime.sendMessage({
+              const r = await sendMessage<{ success: boolean; message?: string }>({
                 type: 'sendToDashDownload',
                 payload: {
                   videoUrl: pair.video.url,
@@ -720,11 +721,11 @@ export default defineContentScript({
                   fileName: pageTitle || pair.video.fileName || undefined,
                   pageUrl: location.href,
                 },
-              })) as { success: boolean; message?: string }
-              if (r.success) {
+              })
+              if (r?.success) {
                 showToast(r.message ? `✓ ${r.message}` : '✓ DASH 音视频下载已推送', 'success')
               } else {
-                showToast(`下载失败: ${r.message ?? 'unknown'}`, 'error')
+                showToast(`下载失败: ${r?.message ?? 'unknown'}`, 'error')
               }
             } catch (err) {
               showToast(`下载失败: ${(err as Error).message}`, 'error')
@@ -740,7 +741,7 @@ export default defineContentScript({
             const item = mediaItems.find((m) => m.url === url)
             const pageTitle = cleanPageTitle()
             try {
-              const r = (await chrome.runtime.sendMessage({
+              const r = await sendMessage<{ success: boolean; message?: string }>({
                 type: 'sendToDownload',
                 payload: {
                   url,
@@ -754,9 +755,9 @@ export default defineContentScript({
                   ext: item?.ext,
                   contentLength: item?.size ? String(item.size) : undefined,
                 },
-              })) as { success: boolean; message?: string }
-              if (!r.success) {
-                showToast(`下载失败: ${r.message ?? 'unknown'}`, 'error')
+              })
+              if (!r?.success) {
+                showToast(`下载失败: ${r?.message ?? 'unknown'}`, 'error')
               }
             } catch (err) {
               showToast(`下载失败: ${(err as Error).message}`, 'error')
@@ -819,8 +820,8 @@ export default defineContentScript({
     /**
      * 获取 tabId 后启动轮询
      */
-    chrome.runtime.sendMessage({ type: 'getCurrentTabId' }).then((resp) => {
-      currentTabId = (resp as { tabId?: number })?.tabId ?? 0
+    sendMessage<{ tabId?: number }>({ type: 'getCurrentTabId' }).then((resp) => {
+      currentTabId = resp?.tabId ?? 0
       if (currentTabId > 0) {
         refreshMediaItems()
         setInterval(refreshMediaItems, 3000)
@@ -835,10 +836,10 @@ export default defineContentScript({
     function reportPageUrl(): void {
       try {
         const title = (document.title || '').trim().replace(/[ \t\r\n▶]+/g, ' ').trim()
-        void chrome.runtime.sendMessage({
+        sendMessageFireAndForget({
           type: 'velo-report-page-url',
           payload: { url: location.href, title },
-        }).catch(() => {})
+        })
       } catch {
         // ignore
       }
@@ -878,7 +879,7 @@ export default defineContentScript({
       if (link?.href && /^https?:\/\//.test(link.href)) {
         e.preventDefault()
         e.stopPropagation()
-        chrome.runtime.sendMessage({
+        sendMessageFireAndForget({
           type: 'sendToDownload',
           payload: { url: link.href, method: 'GET', pageUrl: location.href },
         })
@@ -909,7 +910,7 @@ export default defineContentScript({
     /**
      * 监听 background 消息（HLS 过滤结果 + visibility + MSE + 连接失败）
      */
-    chrome.runtime.onMessage.addListener((message: unknown) => {
+    onMessageAddListener((message: unknown) => {
       if (!message || typeof message !== 'object') return false
       const msg = message as {
         type?: string
@@ -964,10 +965,10 @@ export default defineContentScript({
 
     async function refreshMediaItems(): Promise<void> {
       try {
-        const items = (await chrome.runtime.sendMessage({
+        const items = (await sendMessage<MediaItemDTO[]>({
           type: 'getMediaItems',
           payload: { tabId: currentTabId },
-        })) as MediaItemDTO[]
+        }))
         const newArray = Array.isArray(items) ? items : []
         const changed = newArray.length !== mediaItems.length
           || newArray.some((item, i) =>

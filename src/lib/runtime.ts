@@ -43,3 +43,21 @@ export function sendMessageFireAndForget(message: unknown): void {
     // ignore
   }
 }
+
+/**
+ * 安全的 chrome.runtime.onMessage.addListener
+ *
+ * 扩展上下文失效时静默忽略，不注册监听器。
+ * 返回 true 表示监听器已注册，false 表示上下文已失效。
+ */
+export function onMessageAddListener(
+  callback: (message: unknown, sender: chrome.runtime.MessageSender, sendResponse: (response?: unknown) => void) => boolean | void,
+): boolean {
+  if (!isContextValid()) return false
+  try {
+    chrome.runtime.onMessage.addListener(callback)
+    return true
+  } catch {
+    return false
+  }
+}
