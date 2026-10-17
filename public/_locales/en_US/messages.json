@@ -193,10 +193,22 @@
     "message": "Back to Settings"
   },
   "options_nav_config": {
-    "message": "Configuration"
+    "message": "Basic Config"
   },
   "options_nav_config_desc": {
-    "message": "Pairing, push, ad filter, fingerprint, filter behavior"
+    "message": "Global toggle, desktop pairing, push, ad filter"
+  },
+  "options_nav_download": {
+    "message": "Download"
+  },
+  "options_nav_download_desc": {
+    "message": "Download client selection, delivery mode, test download"
+  },
+  "options_nav_advanced": {
+    "message": "Advanced"
+  },
+  "options_nav_advanced_desc": {
+    "message": "Fingerprint, filter behavior, custom rules"
   },
   "options_nav_test": {
     "message": "m3u8 Test"

@@ -33,7 +33,7 @@ function StatsPage() {
         {loading ? (
           <p>{i18n('options_loading')}</p>
         ) : stats ? (
-          <div className="hls-data-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          <div className="hls-data-grid hls-data-grid-4">
             <div className="hls-stat-card">
               <span className="hls-stat-label">{i18n('options_stats_total_ads')}</span>
               <span className="hls-stat-value">{stats.total.ads}</span>

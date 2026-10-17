@@ -32,10 +32,8 @@ function SamplesPage() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) throw new Error('未找到活动标签页')
-      // 1. 从 content script 获取当前播放时间（对齐 NDM popup.js ndm-get-playback）
       const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' })
       if (!pb?.ok) throw new Error('读取播放状态失败: ' + (pb?.error || '?'))
-      // 2. 发送给 background 捕获样本 + auto-learn（对齐 NDM popup.js ndm-capture-sample）
       const result = await chrome.runtime.sendMessage({
         type: 'captureSample',
         payload: { tabId: tab.id, currentTime: pb.currentTime },
@@ -93,7 +91,7 @@ function SamplesPage() {
                   <td>{s.windowSegments}</td>
                   <td>{new Date(s.timestamp).toLocaleString()}</td>
                   <td>
-                    <button className="btn-danger" style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => void handleDelete(s.id)}>
+                    <button className="btn-sm btn-danger" onClick={() => void handleDelete(s.id)}>
                       {i18n('options_delete')}
                     </button>
                   </td>

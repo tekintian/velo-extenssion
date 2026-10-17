@@ -73,10 +73,10 @@ function RulesPage() {
                   <span className="suggestion-patterns">{s.adPatterns.join(', ')}</span>
                 </div>
                 <div className="suggestion-actions">
-                  <button className="btn-primary" style={{ padding: '4px 12px', fontSize: '12px' }} onClick={() => void handleApprove(s.id)}>
+                  <button className="btn-sm btn-primary" onClick={() => void handleApprove(s.id)}>
                     {i18n('options_suggestion_approve')}
                   </button>
-                  <button className="btn-secondary" style={{ padding: '4px 12px', fontSize: '12px' }} onClick={() => void handleDismiss(s.id)}>
+                  <button className="btn-sm btn-secondary" onClick={() => void handleDismiss(s.id)}>
                     {i18n('options_suggestion_dismiss')}
                   </button>
                 </div>

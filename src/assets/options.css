@@ -111,34 +111,7 @@ body {
   flex-wrap: wrap;
 }
 
-.hls-actions .btn-secondary {
-  padding: 6px 14px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  transition: background 0.2s;
-}
 
-.hls-actions .btn-secondary:hover {
-  background: #f0f0f0;
-}
-
-.hls-actions .btn-danger {
-  padding: 6px 14px;
-  border: 1px solid #ff4d4f;
-  border-radius: 6px;
-  background: #fff;
-  color: #ff4d4f;
-  cursor: pointer;
-  font-size: 13px;
-  transition: background 0.2s;
-}
-
-.hls-actions .btn-danger:hover {
-  background: #fff1f0;
-}
 
 .options-section {
   background: #fff;
@@ -270,7 +243,7 @@ body {
 
 .options-nav-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 24px;
 }
@@ -807,4 +780,61 @@ body {
 
 .btn-secondary:hover {
   background: #f0f7ff;
+}
+
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+.btn-danger {
+  padding: 8px 16px;
+  background: #fff;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.btn-danger:hover {
+  background: #fff1f0;
+}
+
+.hls-data-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.hls-data-grid-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.hls-stat-value-sm {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.options-notice-error {
+  background: #fff2f0;
+  border-color: #ffccc7;
+  color: #cf1322;
+}
+
+.textarea-mono-lg {
+  min-height: 120px;
+}
+
+.desc-text {
+  font-size: 13px;
+  margin-bottom: 12px;
+  color: #555;
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
 }

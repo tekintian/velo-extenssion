@@ -48,29 +48,26 @@ function TestPage() {
     <PageLayout title={i18n('options_nav_test')}>
       <section className="options-section">
         <h2>{i18n('options_test_input_title')}</h2>
-        <label style={{ display: 'block' }}>
+        <label>
           {i18n('options_test_url_label')}
           <input
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://example.com/stream.m3u8"
-            style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
-        <label style={{ display: 'block', marginTop: '8px' }}>
+        <label>
           {i18n('options_test_host_label')}
           <input
             type="text"
             value={host}
             onChange={(e) => setHost(e.target.value)}
             placeholder="www.example.com"
-            style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
         <button
           className="btn-primary"
-          style={{ marginTop: '12px' }}
           onClick={handleTest}
           disabled={loading}
         >
@@ -79,7 +76,7 @@ function TestPage() {
       </section>
 
       {error && (
-        <div className="options-notice" style={{ background: '#fff2f0', borderColor: '#ffccc7' }}>
+        <div className="options-notice options-notice-error">
           ❌ {error}
         </div>
       )}
@@ -87,14 +84,14 @@ function TestPage() {
       {result && (
         <section className="options-section">
           <h2>{i18n('options_test_result_title')}</h2>
-          <div className="hls-data-grid">
+          <div className="hls-data-grid hls-data-grid-5">
             <div className="hls-stat-card">
               <span className="hls-stat-label">{i18n('options_test_mode')}</span>
-              <span className="hls-stat-value" style={{ fontSize: '14px' }}>{result.mode}</span>
+              <span className="hls-stat-value-sm">{result.mode}</span>
             </div>
             <div className="hls-stat-card">
               <span className="hls-stat-label">{i18n('options_test_matched_rule')}</span>
-              <span className="hls-stat-value" style={{ fontSize: '14px' }}>{result.matchedRule ?? '-'}</span>
+              <span className="hls-stat-value-sm">{result.matchedRule ?? '-'}</span>
             </div>
             <div className="hls-stat-card">
               <span className="hls-stat-label">{i18n('options_test_ad_segments')}</span>
@@ -111,8 +108,8 @@ function TestPage() {
           </div>
 
           {result.reasons.length > 0 && (
-            <div style={{ marginTop: '16px' }}>
-              <h3 style={{ fontSize: '13px', marginBottom: '8px' }}>{i18n('options_test_segment_reasons')}</h3>
+            <div className="sub-section">
+              <h3 className="sub-title">{i18n('options_test_segment_reasons')}</h3>
               <div className="reason-list">
                 {result.reasons.map((r, i) => (
                   <div key={i} className={`reason-item ${r.isAd ? 'reason-ad' : 'reason-content'}`}>
@@ -126,12 +123,12 @@ function TestPage() {
           )}
 
           {result.cleanedM3u8 && (
-            <div style={{ marginTop: '16px' }}>
-              <h3 style={{ fontSize: '13px', marginBottom: '8px' }}>{i18n('options_test_cleaned_m3u8')}</h3>
+            <div className="sub-section">
+              <h3 className="sub-title">{i18n('options_test_cleaned_m3u8')}</h3>
               <textarea
                 readOnly
                 value={result.cleanedM3u8}
-                style={{ width: '100%', minHeight: '120px', fontFamily: 'monospace', fontSize: '11px', padding: '8px', border: '1px solid #d9d9d9', borderRadius: '6px' }}
+                className="textarea-mono textarea-mono-lg"
               />
             </div>
           )}

@@ -69,11 +69,9 @@ function DataPage() {
     <PageLayout title={i18n('options_nav_data')}>
       <section className="options-section">
         <h2>{i18n('options_export_title')}</h2>
-        <p style={{ fontSize: '13px', marginBottom: '12px', color: '#555' }}>
-          {i18n('options_export_desc')}
-        </p>
+        <p className="desc-text">{i18n('options_export_desc')}</p>
         {categories.map((cat) => (
-          <label key={cat.key} className="checkbox-label" style={{ marginBottom: '6px' }}>
+          <label key={cat.key} className="checkbox-label">
             <input
               type="checkbox"
               checked={exportCategories.has(cat.key)}
@@ -82,18 +80,16 @@ function DataPage() {
             {i18n(cat.labelKey)}
           </label>
         ))}
-        <button className="btn-primary" style={{ marginTop: '12px' }} onClick={() => void handleExport()}>
+        <button className="btn-primary" onClick={() => void handleExport()}>
           {i18n('options_export_button')}
         </button>
       </section>
 
       <section className="options-section">
         <h2>{i18n('options_import_title')}</h2>
-        <p style={{ fontSize: '13px', marginBottom: '12px', color: '#555' }}>
-          {i18n('options_import_desc')}
-        </p>
-        <div style={{ marginBottom: '12px' }}>
-          <label className="checkbox-label" style={{ marginBottom: '6px' }}>
+        <p className="desc-text">{i18n('options_import_desc')}</p>
+        <div className="radio-group">
+          <label className="checkbox-label">
             <input
               type="radio"
               name="importStrategy"
@@ -102,7 +98,7 @@ function DataPage() {
             />
             {i18n('options_strategy_merge')}
           </label>
-          <label className="checkbox-label" style={{ marginBottom: '6px' }}>
+          <label className="checkbox-label">
             <input
               type="radio"
               name="importStrategy"

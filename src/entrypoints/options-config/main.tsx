@@ -6,39 +6,12 @@ import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
 import '@/assets/options.css'
 
-type DlClient = 'ndm' | 'aria2' | 'velo' | 'native'
-
 function ConfigPage() {
   const [config, setConfig] = useState<VeloConfig>({ ...DEFAULT_CONFIG })
   const [saved, setSaved] = useState(false)
-  const [fpConfig, setFpConfig] = useState<{
-    enableFingerprint: boolean
-    fingerprintMode: string
-    autoLearnFingerprints: boolean
-    remoteFingerprintsUrl: string
-  }>({ enableFingerprint: false, fingerprintMode: 'suspicious-only', autoLearnFingerprints: true, remoteFingerprintsUrl: '' })
   const [fullConfig, setFullConfig] = useState<{
     enableAdSkip: boolean
-    showPageBadge: boolean
-    keepDiscontinuityOnGap: boolean
-    logToConsole: boolean
-    mode: string
-    urlPatterns: string
-    remoteRulesUrl: string
-  }>({ enableAdSkip: true, showPageBadge: true, keepDiscontinuityOnGap: true, logToConsole: false, mode: 'm3u8-file', urlPatterns: '', remoteRulesUrl: '' })
-  const [advancedSaved, setAdvancedSaved] = useState(false)
-
-  const [dlClient, setDlClient] = useState<DlClient>('native')
-  const [rpcHost, setRpcHost] = useState('localhost')
-  const [rpcPort, setRpcPort] = useState(16816)
-  const [rpcSecret, setRpcSecret] = useState('')
-  const [veloHost, setVeloHost] = useState('127.0.0.1')
-  const [veloPort, setVeloPort] = useState(16888)
-  const [veloToken, setVeloToken] = useState('')
-  const [dlSaved, setDlSaved] = useState(false)
-  const [testUrl, setTestUrl] = useState('')
-  const [testResult, setTestResult] = useState<string | null>(null)
-  const [testing, setTesting] = useState(false)
+  }>({ enableAdSkip: true })
 
   useEffect(() => {
     void loadConfig()
@@ -50,102 +23,28 @@ function ConfigPage() {
       if (resp) setConfig({ ...DEFAULT_CONFIG, ...resp })
     } catch { /* ignore */ }
     try {
-      const fp = await chrome.runtime.sendMessage({ type: 'getHlsFingerprintConfig' })
-      if (fp) setFpConfig({
-        enableFingerprint: fp.enableFingerprint ?? false,
-        fingerprintMode: fp.fingerprintMode ?? 'suspicious-only',
-        autoLearnFingerprints: fp.autoLearnFingerprints ?? true,
-        remoteFingerprintsUrl: fp.remoteFingerprintsUrl ?? '',
-      })
-    } catch { /* ignore */ }
-    try {
       const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
       if (full) setFullConfig({
         enableAdSkip: full.enableAdSkip ?? true,
-        showPageBadge: full.showPageBadge ?? true,
-        keepDiscontinuityOnGap: full.keepDiscontinuityOnGap ?? true,
-        logToConsole: full.logToConsole ?? false,
-        mode: full.mode ?? 'm3u8-file',
-        urlPatterns: Array.isArray(full.urlPatterns) ? full.urlPatterns.join('\n') : '',
-        remoteRulesUrl: full.remoteRulesUrl ?? '',
       })
-    } catch { /* ignore */ }
-    try {
-      const dl = await chrome.runtime.sendMessage({ type: 'getDownloadConfig' }) as {
-        client: string; rpcHost: string; rpcPort: number; rpcSecret: string
-        veloHost: string; veloPort: number; veloToken: string
-      }
-      if (dl) {
-        setDlClient((dl.client as DlClient) ?? 'native')
-        setRpcHost(dl.rpcHost ?? 'localhost')
-        setRpcPort(dl.rpcPort ?? 16816)
-        setRpcSecret(dl.rpcSecret ?? '')
-        setVeloHost(dl.veloHost ?? '127.0.0.1')
-        setVeloPort(dl.veloPort ?? 16888)
-        setVeloToken(dl.veloToken ?? '')
-      }
     } catch { /* ignore */ }
   }
 
   const handleSave = useCallback(async () => {
     try {
       await chrome.runtime.sendMessage({ type: 'velo-save-config', config })
+      await chrome.runtime.sendMessage({
+        type: 'setHlsFullConfig',
+        payload: { enableAdSkip: fullConfig.enableAdSkip },
+      })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch { /* ignore */ }
-  }, [config])
+  }, [config, fullConfig.enableAdSkip])
 
   const update = useCallback(<K extends keyof VeloConfig>(key: K, value: VeloConfig[K]) => {
     setConfig((prev) => ({ ...prev, [key]: value }))
   }, [])
-
-  async function handleDlSave() {
-    try {
-      await chrome.runtime.sendMessage({
-        type: 'setDownloadConfig',
-        payload: { client: dlClient, rpcHost, rpcPort, rpcSecret, veloHost, veloPort, veloToken },
-      })
-      await chrome.runtime.sendMessage({
-        type: 'setHlsFullConfig',
-        payload: { mode: fullConfig.mode },
-      })
-      setDlSaved(true)
-      setTimeout(() => setDlSaved(false), 2000)
-    } catch (e) {
-      alert(i18n('options_save_failed') + ': ' + (e as Error).message)
-    }
-  }
-
-  async function handleTest() {
-    if (!testUrl) return
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const r = await chrome.runtime.sendMessage({
-        type: 'sendToDownload',
-        payload: { url: testUrl, pageUrl: testUrl },
-      }) as { success: boolean; message?: string }
-      setTestResult(r.success ? i18n('options_download_sent') : `✗ ${r.message ?? 'fail'}`)
-    } catch (e) {
-      setTestResult(`✗ ${(e as Error).message}`)
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  const CLIENTS: { id: DlClient; icon: string; nameKey: string; descKey: string }[] = [
-    { id: 'native', icon: '🌐', nameKey: 'options_browser_native', descKey: 'options_use_chrome_download' },
-    { id: 'aria2', icon: '⚡', nameKey: 'options_aria2_client', descKey: 'options_http_json_rpc' },
-    { id: 'ndm', icon: '📥', nameKey: 'options_ndm_desktop', descKey: 'options_ws_protocol' },
-    { id: 'velo', icon: '🚀', nameKey: 'options_velo_client', descKey: 'options_velo_protocol' },
-  ]
-
-  const DELIVERY_MODES: { id: string; labelKey: string }[] = [
-    { id: 'm3u8-file', labelKey: 'options_mode_m3u8_file' },
-    { id: 'data-url', labelKey: 'options_mode_data_url' },
-    { id: 'enumerate', labelKey: 'options_mode_enumerate' },
-    { id: 'passthrough', labelKey: 'options_mode_passthrough' },
-  ]
 
   return (
     <PageLayout title={i18n('options_nav_config')}>
@@ -166,8 +65,8 @@ function ConfigPage() {
         </div>
       </section>
 
-      <details className="options-section" open>
-        <summary className="section-summary">{i18n('options_pairing_title')}</summary>
+      <section className="options-section">
+        <h2>{i18n('options_pairing_title')}</h2>
         <label>
           {i18n('options_port_label')}
           <input
@@ -187,94 +86,10 @@ function ConfigPage() {
             placeholder="Token"
           />
         </label>
-      </details>
+      </section>
 
-      <details className="options-section" open>
-        <summary className="section-summary">{i18n('options_download_client_title')}</summary>
-        <p className="section-desc">{i18n('options_download_client_desc')}</p>
-
-        <div className="client-grid">
-          {CLIENTS.map((c) => (
-            <button
-              key={c.id}
-              className={`client-btn ${dlClient === c.id ? 'client-btn-active' : ''}`}
-              onClick={() => setDlClient(c.id)}
-            >
-              <span className="client-btn-name">{c.icon} {i18n(c.nameKey)}</span>
-              <span className="client-btn-desc">{i18n(c.descKey)}</span>
-            </button>
-          ))}
-        </div>
-
-        {dlClient === 'aria2' && (
-          <div className="sub-fields">
-            <div className="field-row-2">
-              <label>
-                <span className="field-label">{i18n('options_rpc_host')}</span>
-                <input value={rpcHost} onChange={(e) => setRpcHost(e.target.value)} placeholder="localhost" />
-              </label>
-              <label>
-                <span className="field-label">{i18n('options_rpc_port')}</span>
-                <input type="number" value={rpcPort} onChange={(e) => setRpcPort(parseInt(e.target.value, 10) || 16816)} placeholder="16816" />
-              </label>
-            </div>
-            <label>
-              <span className="field-label">{i18n('options_rpc_secret')}</span>
-              <input type="password" value={rpcSecret} onChange={(e) => setRpcSecret(e.target.value)} placeholder={i18n('options_rpc_secret_placeholder')} />
-            </label>
-          </div>
-        )}
-
-        {dlClient === 'ndm' && (
-          <div className="hint-box">{i18n('options_ndm_hint')}</div>
-        )}
-
-        {dlClient === 'velo' && (
-          <div className="sub-fields">
-            <div className="field-row-2">
-              <label>
-                <span className="field-label">{i18n('options_velo_host')}</span>
-                <input value={veloHost} onChange={(e) => setVeloHost(e.target.value)} placeholder="127.0.0.1" />
-              </label>
-              <label>
-                <span className="field-label">{i18n('options_velo_port')}</span>
-                <input type="number" value={veloPort} onChange={(e) => setVeloPort(parseInt(e.target.value, 10) || 16888)} placeholder="16888" />
-              </label>
-            </div>
-            <label>
-              <span className="field-label">{i18n('options_velo_token')}</span>
-              <input type="password" value={veloToken} onChange={(e) => setVeloToken(e.target.value)} placeholder={i18n('options_velo_token_placeholder')} />
-            </label>
-            <div className="hint-box">{i18n('options_velo_hint')}</div>
-          </div>
-        )}
-
-        {dlClient === 'native' && (
-          <div className="hint-box">{i18n('options_native_hint')}</div>
-        )}
-
-        <div className="sub-section">
-          <span className="field-label">{i18n('options_hls_delivery_mode')}</span>
-          <div className="mode-grid">
-            {DELIVERY_MODES.map((m) => (
-              <button
-                key={m.id}
-                className={`mode-btn ${fullConfig.mode === m.id ? 'mode-btn-active' : ''}`}
-                onClick={() => setFullConfig({ ...fullConfig, mode: m.id })}
-              >
-                {i18n(m.labelKey)}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <button className="btn-primary" onClick={() => void handleDlSave()}>
-          {dlSaved ? `✅ ${i18n('options_saved')}` : i18n('options_save_config')}
-        </button>
-      </details>
-
-      <details className="options-section">
-        <summary className="section-summary">{i18n('options_push_title')}</summary>
+      <section className="options-section">
+        <h2>{i18n('options_push_title')}</h2>
         <label>
           {i18n('options_merge_format_label')}
           <select value={config.mergeFormat} onChange={(e) => update('mergeFormat', e.target.value as VeloConfig['mergeFormat'])}>
@@ -292,10 +107,10 @@ function ConfigPage() {
           />
           {i18n('options_auto_push_label')}
         </label>
-      </details>
+      </section>
 
-      <details className="options-section">
-        <summary className="section-summary">{i18n('options_filter_title')}</summary>
+      <section className="options-section">
+        <h2>{i18n('options_filter_title')}</h2>
         <label>
           {i18n('options_threshold_label')}
           <input
@@ -314,181 +129,7 @@ function ConfigPage() {
           />
           {i18n('options_enable_filter_label')}
         </label>
-      </details>
-
-      <details className="options-section">
-        <summary className="section-summary">{i18n('options_advanced_config_title')}</summary>
-
-        <div className="sub-section">
-          <h3 className="sub-title">{i18n('options_fingerprint_title')}</h3>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={fpConfig.enableFingerprint}
-              onChange={(e) => setFpConfig({ ...fpConfig, enableFingerprint: e.target.checked })}
-            />
-            {i18n('options_enable_fingerprint')}
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={fpConfig.autoLearnFingerprints}
-              onChange={(e) => setFpConfig({ ...fpConfig, autoLearnFingerprints: e.target.checked })}
-            />
-            {i18n('options_auto_learn_fingerprint')}
-          </label>
-          <label>
-            {i18n('options_fingerprint_mode')}
-            <select
-              value={fpConfig.fingerprintMode}
-              onChange={(e) => setFpConfig({ ...fpConfig, fingerprintMode: e.target.value })}
-            >
-              <option value="off">{i18n('options_fp_mode_off')}</option>
-              <option value="suspicious-only">{i18n('options_fp_mode_suspicious')}</option>
-              <option value="all">{i18n('options_fp_mode_all')}</option>
-            </select>
-          </label>
-          <label>
-            {i18n('options_remote_fp_url')}
-            <input
-              type="url"
-              value={fpConfig.remoteFingerprintsUrl}
-              onChange={(e) => setFpConfig({ ...fpConfig, remoteFingerprintsUrl: e.target.value })}
-              placeholder="https://example.com/fingerprints.json"
-            />
-          </label>
-          <button
-            className="btn-secondary"
-            onClick={async () => {
-              try {
-                await chrome.runtime.sendMessage({
-                  type: 'setHlsFingerprintConfig',
-                  payload: {
-                    ...fpConfig,
-                    enableFingerprint: true,
-                    fingerprintMode: 'all',
-                    autoLearnFingerprints: true,
-                  },
-                })
-                setFpConfig({ ...fpConfig, enableFingerprint: true, fingerprintMode: 'all', autoLearnFingerprints: true })
-                const r = await chrome.runtime.sendMessage({ type: 'getHlsFingerprintConfig' })
-                alert(i18n('options_boost_result', [String(r?.learnedCount ?? 0)]))
-              } catch (e) { alert(String(e)) }
-            }}
-          >
-            🚀 {i18n('options_boost_detect')}
-          </button>
-        </div>
-
-        <div className="sub-section">
-          <h3 className="sub-title">{i18n('options_filter_behavior_title')}</h3>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={fullConfig.showPageBadge}
-              onChange={(e) => setFullConfig({ ...fullConfig, showPageBadge: e.target.checked })}
-            />
-            {i18n('options_show_page_badge')}
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={fullConfig.keepDiscontinuityOnGap}
-              onChange={(e) => setFullConfig({ ...fullConfig, keepDiscontinuityOnGap: e.target.checked })}
-            />
-            {i18n('options_keep_discontinuity')}
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={fullConfig.logToConsole}
-              onChange={(e) => setFullConfig({ ...fullConfig, logToConsole: e.target.checked })}
-            />
-            {i18n('options_log_to_console')}
-          </label>
-          <label>
-            {i18n('options_output_mode')}
-            <select
-              value={fullConfig.mode}
-              onChange={(e) => setFullConfig({ ...fullConfig, mode: e.target.value })}
-            >
-              <option value="m3u8-file">{i18n('options_mode_m3u8_file')}</option>
-              <option value="data-url">{i18n('options_mode_data_url')}</option>
-              <option value="enumerate">{i18n('options_mode_enumerate')}</option>
-              <option value="passthrough">{i18n('options_mode_passthrough')}</option>
-              <option value="disabled">{i18n('options_mode_disabled')}</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="sub-section">
-          <h3 className="sub-title">{i18n('options_custom_rules_title')}</h3>
-          <label>
-            {i18n('options_url_patterns')}
-            <textarea
-              className="textarea-mono"
-              value={fullConfig.urlPatterns}
-              onChange={(e) => setFullConfig({ ...fullConfig, urlPatterns: e.target.value })}
-              placeholder={'/ads?/\ndoubleclick\\.com'}
-            />
-          </label>
-          <label>
-            {i18n('options_remote_rules_url')}
-            <input
-              type="url"
-              value={fullConfig.remoteRulesUrl}
-              onChange={(e) => setFullConfig({ ...fullConfig, remoteRulesUrl: e.target.value })}
-              placeholder="https://example.com/velo-rules.json"
-            />
-          </label>
-        </div>
-
-        <button
-          className="btn-primary"
-          onClick={async () => {
-            try {
-              await chrome.runtime.sendMessage({ type: 'setHlsFingerprintConfig', payload: fpConfig })
-              await chrome.runtime.sendMessage({
-                type: 'setHlsFullConfig',
-                payload: {
-                  ...fullConfig,
-                  urlPatterns: fullConfig.urlPatterns.split('\n').filter(Boolean),
-                },
-              })
-              setAdvancedSaved(true)
-              setTimeout(() => setAdvancedSaved(false), 2000)
-            } catch (e) { alert(i18n('options_save_failed') + ': ' + (e as Error).message) }
-          }}
-        >
-          {i18n('options_save_advanced_config')}
-        </button>
-        {advancedSaved && <span className="save-indicator">✅ {i18n('options_saved')}</span>}
-      </details>
-
-      <details className="options-section">
-        <summary className="section-summary">{i18n('options_test_download')}</summary>
-        <p className="section-desc">{i18n('options_test_download_desc')}</p>
-        <div className="test-row">
-          <input
-            value={testUrl}
-            onChange={(e) => setTestUrl(e.target.value)}
-            placeholder="https://example.com/file.zip"
-            className="test-input"
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => void handleTest()}
-            disabled={!testUrl.trim() || testing}
-          >
-            {testing ? i18n('options_testing') : i18n('options_test')}
-          </button>
-        </div>
-        {testResult && (
-          <div className={`test-result ${testResult.startsWith('✓') ? 'test-ok' : 'test-err'}`}>
-            {testResult}
-          </div>
-        )}
-      </details>
+      </section>
 
       <div className="options-actions">
         <button className="btn-primary" onClick={handleSave}>

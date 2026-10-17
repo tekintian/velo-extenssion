@@ -193,10 +193,22 @@
     "message": "返回设置首页"
   },
   "options_nav_config": {
-    "message": "配置"
+    "message": "基础配置"
   },
   "options_nav_config_desc": {
-    "message": "配对、推送、广告过滤、指纹库、过滤行为"
+    "message": "全局开关、桌面端配对、推送、广告过滤"
+  },
+  "options_nav_download": {
+    "message": "下载设置"
+  },
+  "options_nav_download_desc": {
+    "message": "下载客户端选择、投递模式、测试下载"
+  },
+  "options_nav_advanced": {
+    "message": "高级配置"
+  },
+  "options_nav_advanced_desc": {
+    "message": "指纹库、过滤行为、自定义规则"
   },
   "options_nav_test": {
     "message": "m3u8 实测"
