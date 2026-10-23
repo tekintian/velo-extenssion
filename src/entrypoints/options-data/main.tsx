@@ -125,4 +125,8 @@ function DataPage() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<DataPage />)
+const rootEl = document.getElementById('root')!
+if (!(rootEl as any)._reactRoot) {
+  ;(rootEl as any)._reactRoot = createRoot(rootEl)
+}
+;(rootEl as any)._reactRoot.render(<DataPage />)

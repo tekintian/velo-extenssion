@@ -5,12 +5,13 @@ import { initMessageRouter, registerHandler } from '@/background/messaging/route
 import { PairingManager, type ProbeResult } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
 import { startSniffer, setM3u8ProcessHandler, getMediaItems } from '@/background/media/sniffer'
-import { setPushClient, pushHls, pushUrl, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig } from '@/background/media/download-client'
+import { setPushClient, pushHls, pushUrl, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig, getCachedDownloadConfig } from '@/background/media/download-client'
 import type { DownloadClientConfig } from '@/background/media/types'
 import { registerMediaHandlers } from '@/background/media/handler'
 import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
 import { registerHlsHandlers } from '@/background/hls/handler'
 import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
+import { recordStats } from '@/engine/hls/stats'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type VeloConfig } from '@/types'
 import { configStore, persistentStorage } from '@/lib/storage'
 import type { MediaDescriptor } from '@/types'
@@ -161,7 +162,8 @@ function registerHandlers(): void {
           cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
         }
       } catch { /* ignore */ }
-      await pushHls(descriptor, cleaned, { mergeFormat: config.mergeFormat }, { pageUrl: effectivePageUrl, cookies })
+      const dlCfg2 = getCachedDownloadConfig()
+      await pushHls(descriptor, cleaned, { mergeFormat: dlCfg2.mergeFormat }, { pageUrl: effectivePageUrl, cookies })
       logger.info('AdClear filtered m3u8 pushed to desktop:', baseUrl.slice(0, 80))
       return { ok: true }
     } catch (e) {
@@ -181,6 +183,17 @@ function registerHandlers(): void {
 
   registerHandler('velo-get-config', async () => {
     return config
+  })
+
+  registerHandler('getExtensionEnabled', async () => {
+    const val = await persistentStorage.get<{ enabled: boolean }>('extensionGlobalConfig')
+    return { enabled: val?.enabled ?? true }
+  })
+
+  registerHandler<{ enabled: boolean }>('setExtensionEnabled', async (message) => {
+    const { enabled } = message.payload
+    await persistentStorage.set('extensionGlobalConfig', { enabled })
+    return { ok: true, enabled }
   })
 
   registerHandler<{ config: Partial<VeloConfig> }>('velo-save-config', async (message) => {
@@ -338,7 +351,10 @@ async function veloProcessM3u8(
   sniffedHeaders?: Record<string, string>,
 ): Promise<void> {
   try {
-    if (!config.enableFilter) {
+    const hlsCfg = (await persistentStorage.get<Record<string, unknown>>('hlsFilterConfig')) ?? {}
+    const enableFilter = (hlsCfg.enableAdSkip as boolean) ?? true
+    const scoreThreshold = (hlsCfg.scoreThreshold as number) ?? 3
+    if (!enableFilter) {
       logger.info('[velo] filter disabled, skip m3u8 processing')
       return
     }
@@ -385,8 +401,8 @@ async function veloProcessM3u8(
     const cfg = await buildConfig(
       {
         ...DEFAULT_CONFIG,
-        enabled: config.enableFilter,
-        scoreThreshold: config.scoreThreshold,
+        enabled: enableFilter,
+        scoreThreshold,
       },
       pageHost,
     )
@@ -411,6 +427,18 @@ async function veloProcessM3u8(
         })
       } catch {
         // badge 未注入 — 忽略
+      }
+    }
+
+    // === 记录统计 ===
+    if (result.report && 'ads' in result.report && result.report.ads > 0) {
+      try {
+        await recordStats(
+          result.report as { ads: number; adDuration: number; contentDuration: number; appliedRule?: { id: string } | null },
+          pageHost,
+        )
+      } catch (e) {
+        logger.warn('[velo] recordStats failed:', (e as Error).message)
       }
     }
 
@@ -480,24 +508,26 @@ async function veloProcessM3u8(
     if (fetchHeaders['Cookie']) pushExtra.cookies = fetchHeaders['Cookie']
     if (sniffedHeaders) pushExtra.requestHeaders = sniffedHeaders
 
+    const dlCfg = getCachedDownloadConfig()
+
     if (result.mode === 'master') {
       const variants = ('variants' in result ? result.variants : []) as Array<{ url: string }>
       if (variants.length > 0) {
-        await pushUrl(variants[0]!.url, descriptor, { mergeFormat: config.mergeFormat }, pushExtra)
+        await pushUrl(variants[0]!.url, descriptor, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
       }
       return
     }
 
     if (result.mode === 'no-ads' || result.mode === 'disabled' || result.mode === 'passthrough') {
-      if (config.autoPush) {
-        await pushHls(descriptor, text, { mergeFormat: config.mergeFormat }, pushExtra)
+      if (dlCfg.autoPush) {
+        await pushHls(descriptor, text, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
       }
       return
     }
 
     if ('cleaned' in result && typeof result.cleaned === 'string') {
-      if (config.autoPush) {
-        await pushHls(descriptor, result.cleaned, { mergeFormat: config.mergeFormat }, pushExtra)
+      if (dlCfg.autoPush) {
+        await pushHls(descriptor, result.cleaned, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
         logger.info('[velo] HLS push completed')
       }
     }

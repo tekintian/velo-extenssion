@@ -28,7 +28,7 @@ import { recordStats, getStats, clearStats } from '@/engine/hls/stats'
 import { captureSample, recordSample, autoLearnFromSample, listSamples, removeSample, clearSamples, setSampleNote } from '@/engine/hls/samples'
 import { buildExport, applyImport } from '@/engine/hls/io'
 import { getLearnedCount, clearLearned } from '@/engine/hls/fingerprint'
-import { refreshRemoteRules } from '@/engine/hls/hls-rules'
+import { refreshRemoteRules, listAllRules } from '@/engine/hls/hls-rules'
 import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToVeloM3u8, materializeDataUrl, getPushClient, buildVeloHeaders } from '@/background/media/download-client'
 import { getMediaItems } from '@/background/media/sniffer'
 
@@ -200,6 +200,11 @@ export function registerHlsHandlers(): void {
     return await listPending()
   })
 
+  // 别名：前端调用 listSuggestions 时映射到 listSuggestPending
+  registerHandler('listSuggestions', async () => {
+    return await listPending()
+  })
+
   registerHandler<{ id: string }>('approveSuggestion', async (message) => {
     const { id } = message.payload
     const ok = await approve(id)
@@ -220,6 +225,13 @@ export function registerHlsHandlers(): void {
   })
 
   registerHandler<{ id: string }>('removeSample', async (message) => {
+    const { id } = message.payload
+    await removeSample(id)
+    return { success: true as const }
+  })
+
+  // 别名：前端调用 deleteSample 时映射到 removeSample
+  registerHandler<{ id: string }>('deleteSample', async (message) => {
     const { id } = message.payload
     await removeSample(id)
     return { success: true as const }
@@ -334,6 +346,94 @@ export function registerHlsHandlers(): void {
     const result = await refreshRemoteRules(url)
     logger.info('[hls] remote rules refreshed:', result.rules, 'rules')
     return result
+  })
+
+  // === 规则库查询 ===
+  registerHandler('listHlsRules', async () => {
+    const rules = await listAllRules()
+    return { rules }
+  })
+
+  // === m3u8 实测 ===
+  registerHandler<{ url: string; host?: string }>('testM3u8', async (message) => {
+    const { url, host } = message.payload
+    logger.info('[hls] testM3u8 called, url:', url.slice(0, 80))
+
+    // 1. fetch m3u8 内容
+    let text: string
+    try {
+      const resp = await fetch(url, { cache: 'no-store' })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      text = await resp.text()
+    } catch (e) {
+      logger.error('[hls] testM3u8 fetch failed:', (e as Error).message)
+      return { error: (e as Error).message }
+    }
+
+    // 2. 构建配置
+    const pageHost = host || (() => {
+      try { return new URL(url).host } catch { return '' }
+    })()
+
+    const fpCfg = (await persistentStorage.get<Record<string, unknown>>('hlsFilterConfig')) ?? {}
+    const stored = await settingsStore.get<typeof DEFAULT_SETTINGS>()
+    const settings = { ...DEFAULT_SETTINGS, ...stored }
+
+    const cfg = await buildConfig(
+      {
+        ...DEFAULT_CONFIG,
+        enabled: true,
+        logToConsole: settings.enableLogging,
+        enableFingerprint: (fpCfg.enableFingerprint as boolean) ?? false,
+        fingerprintMode: ((fpCfg.fingerprintMode as string) ?? 'suspicious-only') as 'off' | 'suspicious-only' | 'all',
+        autoLearnFingerprints: false, // 测试模式不自动学习
+        remoteFingerprintsUrl: (fpCfg.remoteFingerprintsUrl as string) ?? '',
+      },
+      pageHost,
+    )
+
+    // 3. 调用 processPlaylist
+    const result = await processPlaylist(text, url, url, cfg)
+
+    // 4. 序列化返回（兼容前端 TestResult 接口）
+    const ret: Record<string, unknown> = {
+      mode: result.mode,
+      matchedRule: cfg._appliedRule ? cfg._appliedRule.id : null,
+    }
+
+    if (result.report && typeof result.report === 'object') {
+      const rpt = result.report as Record<string, unknown>
+      ret.totalSegments = rpt.total ?? 0
+      ret.adSegments = rpt.ads ?? 0
+      ret.adDuration = rpt.adDuration ?? 0
+      ret.contentDuration = rpt.contentDuration ?? 0
+    } else {
+      ret.totalSegments = 0
+      ret.adSegments = 0
+      ret.adDuration = 0
+      ret.contentDuration = 0
+    }
+
+    // reasons 序列化
+    if ('reasons' in result && result.reasons) {
+      const reasons = result.reasons as Record<number, string[]>
+      ret.reasons = Object.entries(reasons).map(([index, reasonList]) => ({
+        index: Number(index),
+        isAd: true,
+        reason: reasonList.join('; '),
+      }))
+    } else {
+      ret.reasons = []
+    }
+
+    // cleaned m3u8
+    if ('cleaned' in result && typeof result.cleaned === 'string') {
+      ret.cleanedM3u8 = result.cleaned
+    } else {
+      ret.cleanedM3u8 = ''
+    }
+
+    return ret
   })
 
   // popup 查询当前 tab 最近检测信息
@@ -537,7 +637,7 @@ export function registerHlsHandlers(): void {
 
       // NDM 模式：发 data URL 给 NDM WebSocket
       if (cfg.client === 'ndm') {
-        const r = await sendToNdm(m3u8DataUrl, outputName, downloadExtra)
+        const r = await sendToNdm(m3u8DataUrl, outputName, cfg, downloadExtra)
         return { ok: r.success as boolean, filename: outputName, ...(r.message ? { error: r.message } : {}) }
       }
 

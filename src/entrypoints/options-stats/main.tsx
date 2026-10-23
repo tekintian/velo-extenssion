@@ -4,146 +4,160 @@ import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
 import '@/assets/options.css'
 
-interface StatsData {
-  total: { ads: number; adDuration: number; contentDuration: number; detections: number }
-  topHosts: Array<{ host: string; ads: number; adDuration: number }>
-  topRules: Array<{ ruleId: string; hits: number }>
-  recentReports: Array<{ timestamp: number; host: string; adSegments: number; totalSegments: number; ruleId: string }>
+interface HlsStats {
+  total: { ads: number; adDuration: number; contentDuration: number; reports: number }
+  byHost: Record<string, { ads: number; adDuration: number; reports: number; lastSeen: number }>
+  byRule: Record<string, { ads: number; reports: number }>
+  recent: Array<{ host: string; ads: number; adDuration: number; rule: string | null; ts: number }>
+}
+
+function fmtDur(sec: number): string {
+  const s = Math.round(sec || 0)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}m${r ? `${r}s` : ''}`
 }
 
 function StatsPage() {
-  const [stats, setStats] = useState<StatsData | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState<HlsStats | null>(null)
 
-  const loadStats = async () => {
-    setLoading(true)
+  useEffect(() => {
+    void loadStats()
+  }, [])
+
+  async function loadStats() {
     try {
       const r = await chrome.runtime.sendMessage({ type: 'getHlsStats' })
-      if (r) setStats(r)
+      if (r?.total) setStats(r as HlsStats)
     } catch { /* ignore */ }
-    setLoading(false)
   }
 
-  useEffect(() => { void loadStats() }, [])
+  async function handleClearStats() {
+    if (!confirm(i18n('options_confirm_clear_stats') ?? '确定清除所有统计数据？')) return
+    try {
+      await chrome.runtime.sendMessage({ type: 'clearHlsStats' })
+      setStats(null)
+    } catch (e) { alert(String(e)) }
+  }
+
+  const topHosts = stats
+    ? Object.entries(stats.byHost)
+      .sort((a, b) => (b[1].ads - a[1].ads))
+      .slice(0, 5)
+    : []
+
+  const topRules = stats
+    ? Object.entries(stats.byRule)
+      .sort((a, b) => (b[1].ads - a[1].ads))
+      .slice(0, 5)
+    : []
 
   return (
     <PageLayout title={i18n('options_nav_stats')}>
-      <section className="options-section">
-        <h2>{i18n('options_stats_summary_title')}</h2>
-        {loading ? (
-          <p>{i18n('options_loading')}</p>
-        ) : stats ? (
-          <div className="hls-data-grid hls-data-grid-4">
-            <div className="hls-stat-card">
-              <span className="hls-stat-label">{i18n('options_stats_total_ads')}</span>
-              <span className="hls-stat-value">{stats.total.ads}</span>
+      {stats && stats.total.reports > 0 ? (
+        <>
+          {/* 累计统计 */}
+          <section className="options-section">
+            <div className="stat-block">
+              <h3 className="stat-block-title">{i18n('options_stats_summary_title')}</h3>
+              <div className="report-grid">
+                <span className="report-label">{i18n('options_stats_total_ads')}</span>
+                <span><b className="stat-num">{stats.total.ads}</b> {i18n('options_stats_unit_ads')}</span>
+                <span className="report-label">{i18n('options_stats_total_ad_duration')}</span>
+                <span><b className="stat-num">{fmtDur(stats.total.adDuration)}</b></span>
+                <span className="report-label">{i18n('options_stats_total_content_duration')}</span>
+                <span>{fmtDur(stats.total.contentDuration)}</span>
+                <span className="report-label">{i18n('options_stats_total_detections')}</span>
+                <span>{stats.total.reports}</span>
+              </div>
             </div>
-            <div className="hls-stat-card">
-              <span className="hls-stat-label">{i18n('options_stats_total_ad_duration')}</span>
-              <span className="hls-stat-value">{stats.total.adDuration.toFixed(0)}s</span>
+          </section>
+
+          {/* Top 站点 */}
+          {topHosts.length > 0 && (
+            <section className="options-section">
+              <div className="stat-block">
+                <h3 className="stat-block-title">{i18n('options_stats_top_hosts')}</h3>
+                {topHosts.map(([host, d]) => (
+                  <div key={host} className="b-stat">
+                    <span>{host}</span>
+                    <span><b className="stat-num">{d.ads}</b> {i18n('options_stats_unit_ads')} · {fmtDur(d.adDuration)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 命中规则 */}
+          {topRules.length > 0 && (
+            <section className="options-section">
+              <div className="stat-block">
+                <h3 className="stat-block-title">{i18n('options_stats_top_rules')}</h3>
+                {topRules.map(([rule, d]) => (
+                  <div key={rule} className="b-stat">
+                    <span>{rule}</span>
+                    <span><b className="stat-num">{d.ads}</b> {i18n('options_stats_unit_ads')}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 最近报告 */}
+          {stats.recent.length > 0 && (
+            <section className="options-section">
+              <div className="stat-block">
+                <h3 className="stat-block-title">{i18n('options_stats_recent_reports')} ({stats.recent.length})</h3>
+                <div className="recent-list">
+                  {stats.recent.slice(0, 10).map((r, i) => {
+                    const d = new Date(r.ts)
+                    const t = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
+                    return (
+                      <div key={i} className="recent-item">
+                        {t} · {r.host || '?'} · {r.ads} {i18n('options_stats_unit_ads')}{r.rule ? ` · ${r.rule}` : ''}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* 操作按钮 */}
+          <section className="options-section">
+            <div className="btn-row stat-actions">
+              <button className="btn-sm btn-secondary" onClick={() => void loadStats()}>
+                {i18n('options_refresh')}
+              </button>
+              <button className="btn-sm btn-danger" onClick={() => void handleClearStats()}>
+                {i18n('options_clear_stats')}
+              </button>
             </div>
-            <div className="hls-stat-card">
-              <span className="hls-stat-label">{i18n('options_stats_total_detections')}</span>
-              <span className="hls-stat-value">{stats.total.detections}</span>
-            </div>
-            <div className="hls-stat-card">
-              <span className="hls-stat-label">{i18n('options_stats_total_content_duration')}</span>
-              <span className="hls-stat-value">{stats.total.contentDuration.toFixed(0)}s</span>
-            </div>
+          </section>
+        </>
+      ) : (
+        <section className="options-section">
+          <div className="stat-block" style={{ textAlign: 'center', padding: '48px 24px' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.3 }}>📊</div>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>
+              {i18n('options_stats_empty_title') ?? '暂无统计数据'}
+            </h3>
+            <p style={{ fontSize: '13px', color: '#999', marginBottom: '20px', lineHeight: 1.6 }}>
+              {i18n('options_stats_empty_desc') ?? '当 HLS 广告过滤检测到广告分片时，数据将自动记录到这里'}
+            </p>
+            <button className="btn-sm btn-secondary" onClick={() => void loadStats()}>
+              {i18n('options_refresh')}
+            </button>
           </div>
-        ) : (
-          <p>{i18n('options_no_stats')}</p>
-        )}
-      </section>
-
-      {stats?.topHosts && stats.topHosts.length > 0 && (
-        <section className="options-section">
-          <h2>{i18n('options_stats_top_hosts')}</h2>
-          <table className="stats-table">
-            <thead>
-              <tr>
-                <th>{i18n('options_stats_host')}</th>
-                <th>{i18n('options_stats_ads')}</th>
-                <th>{i18n('options_stats_ad_duration')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.topHosts.map((h, i) => (
-                <tr key={i}>
-                  <td>{h.host}</td>
-                  <td>{h.ads}</td>
-                  <td>{h.adDuration.toFixed(1)}s</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </section>
       )}
-
-      {stats?.topRules && stats.topRules.length > 0 && (
-        <section className="options-section">
-          <h2>{i18n('options_stats_top_rules')}</h2>
-          <table className="stats-table">
-            <thead>
-              <tr>
-                <th>{i18n('options_stats_rule')}</th>
-                <th>{i18n('options_stats_hits')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.topRules.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.ruleId}</td>
-                  <td>{r.hits}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      {stats?.recentReports && stats.recentReports.length > 0 && (
-        <section className="options-section">
-          <h2>{i18n('options_stats_recent_reports')}</h2>
-          <table className="stats-table">
-            <thead>
-              <tr>
-                <th>{i18n('options_stats_time')}</th>
-                <th>{i18n('options_stats_host')}</th>
-                <th>{i18n('options_stats_ad_total')}</th>
-                <th>{i18n('options_stats_rule')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.recentReports.map((r, i) => (
-                <tr key={i}>
-                  <td>{new Date(r.timestamp).toLocaleString()}</td>
-                  <td>{r.host}</td>
-                  <td>{r.adSegments}/{r.totalSegments}</td>
-                  <td>{r.ruleId}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      <div className="hls-actions">
-        <button className="btn-secondary" onClick={() => void loadStats()}>
-          {i18n('options_refresh')}
-        </button>
-        <button className="btn-danger" onClick={async () => {
-          if (!confirm(i18n('options_confirm_clear_stats'))) return
-          try {
-            await chrome.runtime.sendMessage({ type: 'clearHlsStats' })
-            setStats(null)
-          } catch (e) { alert(String(e)) }
-        }}>
-          {i18n('options_clear_stats')}
-        </button>
-      </div>
     </PageLayout>
   )
 }
 
-createRoot(document.getElementById('root')!).render(<StatsPage />)
+const rootEl = document.getElementById('root')!
+if (!(rootEl as unknown as { _reactRoot?: ReturnType<typeof createRoot> })._reactRoot) {
+  ;(rootEl as unknown as { _reactRoot: ReturnType<typeof createRoot> })._reactRoot = createRoot(rootEl)
+}
+;(rootEl as unknown as { _reactRoot: ReturnType<typeof createRoot> })._reactRoot.render(<StatsPage />)

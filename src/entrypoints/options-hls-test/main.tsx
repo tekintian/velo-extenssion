@@ -11,7 +11,7 @@ interface TestResult {
   adSegments: number
   adDuration: number
   contentDuration: number
-  reasons: Array<{ index: number; url: string; isAd: boolean; reason: string }>
+  reasons: Array<{ index: number; url?: string; isAd: boolean; reason: string }>
   cleanedM3u8: string
 }
 
@@ -138,4 +138,8 @@ function TestPage() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<TestPage />)
+const rootEl = document.getElementById('root')!
+if (!(rootEl as any)._reactRoot) {
+  ;(rootEl as any)._reactRoot = createRoot(rootEl)
+}
+;(rootEl as any)._reactRoot.render(<TestPage />)

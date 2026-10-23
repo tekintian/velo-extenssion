@@ -193,10 +193,67 @@
     "message": "返回设置首页"
   },
   "options_nav_config": {
-    "message": "基础配置"
+    "message": "通用设置"
   },
   "options_nav_config_desc": {
-    "message": "全局开关、桌面端配对、推送、广告过滤"
+    "message": "全局开关、语言、HLS广告过滤"
+  },
+  "options_language_title": {
+    "message": "语言设置"
+  },
+  "options_language_label": {
+    "message": "界面语言"
+  },
+  "options_hls_filter_title": {
+    "message": "HLS 广告过滤"
+  },
+  "options_enable_hls_filter": {
+    "message": "启用 HLS 广告分片过滤"
+  },
+  "options_hls_filter_desc": {
+    "message": "开启后自动识别并过滤 m3u8 流媒体中的广告分片"
+  },
+  "options_version_label": {
+    "message": "版本"
+  },
+  "options_name_label": {
+    "message": "名称"
+  },
+  "options_description_label": {
+    "message": "描述"
+  },
+  "options_extension_enabled": {
+    "message": "扩展总开关"
+  },
+  "options_extension_enabled_desc": {
+    "message": "关闭后将暂停所有嗅探、过滤和推送功能"
+  },
+  "options_nav_about": {
+    "message": "关于"
+  },
+  "options_nav_about_desc": {
+    "message": "扩展信息、功能特性、相关链接"
+  },
+  "options_about_features": {
+    "message": "功能特性"
+  },
+  "options_about_feature_1": {
+    "message": "m3u8 / mpd 流媒体嗅探与提取"
+  },
+  "options_about_feature_2": {
+    "message": "HLS 广告分片智能过滤"
+  },
+  "options_about_feature_3": {
+    "message": "一键推送到 Velo 桌面端下载"
+  },
+  "options_about_feature_4": {
+    "message": "支持 Aria2、NDM、浏览器原生等多种下载方式"
+  },
+  "options_about_links": {
+    "message": "相关链接"
+  },
+  "options_about_author": {
+    "message": "作者"
   },
   "options_nav_download": {
     "message": "下载设置"
@@ -204,56 +261,35 @@
   "options_nav_download_desc": {
     "message": "下载客户端选择、投递模式、测试下载"
   },
-  "options_nav_advanced": {
-    "message": "高级配置"
-  },
-  "options_nav_advanced_desc": {
-    "message": "指纹库、过滤行为、自定义规则"
-  },
   "options_nav_test": {
-    "message": "m3u8 实测"
+    "message": "HLS 实测"
   },
   "options_nav_test_desc": {
-    "message": "粘贴 URL 测试广告检测，查看命中规则与清洗结果"
+    "message": "粘贴 m3u8 URL 测试广告检测，查看命中规则与清洗结果"
   },
   "options_nav_rules": {
-    "message": "规则库"
+    "message": "HLS 规则库"
   },
   "options_nav_rules_desc": {
     "message": "查看内置/远程/用户规则，审阅自动建议"
+  },
+  "options_nav_samples": {
+    "message": "HLS 样本"
+  },
+  "options_nav_samples_desc": {
+    "message": "广告样本管理，捕获、查看、删除"
   },
   "options_nav_stats": {
     "message": "统计"
   },
   "options_nav_stats_desc": {
-    "message": "过滤统计、Top 站点、规则命中排行、最近报告"
-  },
-  "options_nav_samples": {
-    "message": "样本"
-  },
-  "options_nav_samples_desc": {
-    "message": "广告样本管理，捕获、查看、删除"
+    "message": "HLS 广告过滤累计统计、站点排行、规则命中、最近报告"
   },
   "options_nav_data": {
     "message": "数据"
   },
   "options_nav_data_desc": {
     "message": "导出/导入备份数据，隐私说明"
-  },
-  "options_pairing_title": {
-    "message": "桌面端配对"
-  },
-  "options_port_label": {
-    "message": "桌面端端口"
-  },
-  "options_token_label": {
-    "message": "配对 Token"
-  },
-  "options_save_pairing": {
-    "message": "保存配对"
-  },
-  "options_test_connection": {
-    "message": "测试连接"
   },
   "options_push_title": {
     "message": "推送配置"
@@ -281,9 +317,6 @@
   },
   "options_save_filter": {
     "message": "保存"
-  },
-  "options_advanced_config_title": {
-    "message": "广告过滤高级配置"
   },
   "options_fingerprint_title": {
     "message": "指纹库"
@@ -320,6 +353,15 @@
       }
     }
   },
+  "options_clear_fingerprints": {
+    "message": "清空学习库"
+  },
+  "options_confirm_clear_fingerprints": {
+    "message": "确定清空所有已学习的指纹？此操作不可恢复。"
+  },
+  "options_clear_fingerprints_ok": {
+    "message": "指纹库已清空"
+  },
   "options_filter_behavior_title": {
     "message": "过滤行为"
   },
@@ -328,6 +370,12 @@
   },
   "options_show_page_badge": {
     "message": "显示页面角标（在视频旁显示已过滤广告数）"
+  },
+  "options_show": {
+    "message": "显示"
+  },
+  "options_hide": {
+    "message": "隐藏"
   },
   "options_keep_discontinuity": {
     "message": "广告缺口补 DISCONTINUITY（删除广告分片后补标记）"
@@ -359,6 +407,9 @@
   "options_download_client_desc": {
     "message": "配置媒体嗅探到的资源下载到哪个客户端"
   },
+  "options_default_url": {
+    "message": "默认地址"
+  },
   "options_client_type": {
     "message": "客户端类型"
   },
@@ -386,11 +437,8 @@
   "options_velo_protocol": {
     "message": "WebSocket JSON 推送协议"
   },
-  "options_rpc_host": {
-    "message": "RPC Host"
-  },
-  "options_rpc_port": {
-    "message": "RPC Port"
+  "options_rpc_url": {
+    "message": "RPC 地址"
   },
   "options_rpc_secret": {
     "message": "RPC Secret（可选）"
@@ -398,11 +446,8 @@
   "options_rpc_secret_placeholder": {
     "message": "留空表示无密钥"
   },
-  "options_velo_host": {
-    "message": "推送服务器地址"
-  },
-  "options_velo_port": {
-    "message": "推送服务器端口"
+  "options_velo_url": {
+    "message": "推送地址"
   },
   "options_velo_token": {
     "message": "配对 Token"
@@ -417,10 +462,37 @@
     "message": "浏览器原生下载使用 Chrome 内置下载管理器，点击媒体项的下载按钮即可触发下载。"
   },
   "options_velo_hint": {
-    "message": "velo (Motrix Lite) 通过 WebSocket 接收推送。确保 velo 已启动并开启推送服务（默认端口 16888）。HLS 投递模式为 data-url 时，将直接推送 cleaned m3u8 文本，无需 data URL 编码。"
+    "message": "velo (Motrix Lite) 通过 WebSocket 接收推送。确保 velo 已启动并开启推送服务（默认地址 ws://127.0.0.1:16888/ws）。HLS 投递模式为 data-url 时，将直接推送 cleaned m3u8 文本，无需 data URL 编码。"
   },
   "options_hls_delivery_mode": {
     "message": "投递模式"
+  },
+  "options_header_forward_title": {
+    "message": "请求头转发"
+  },
+  "options_header_forward_desc": {
+    "message": "下载嗅探到的媒体时，向下载客户端携带哪些页面请求头。"
+  },
+  "options_header_full": {
+    "message": "完整转发"
+  },
+  "options_header_full_desc": {
+    "message": "Cookie / Authorization / User-Agent / Referer / Origin"
+  },
+  "options_header_partial": {
+    "message": "仅基础"
+  },
+  "options_header_partial_desc": {
+    "message": "User-Agent / Referer / Origin，不含 Cookie / Authorization"
+  },
+  "options_header_none": {
+    "message": "不转发"
+  },
+  "options_header_none_desc": {
+    "message": "不携带任何页面请求头"
+  },
+  "options_header_forward_hint": {
+    "message": "降低转发级别可能导致需要身份验证的媒体下载失败。请确保下载客户端地址可信。"
   },
   "options_test_download": {
     "message": "测试下载"
@@ -437,6 +509,9 @@
   "options_download_sent": {
     "message": "✓ 下载已发送"
   },
+  "options_test_failed": {
+    "message": "失败"
+  },
   "options_custom_rules_title": {
     "message": "自定义规则"
   },
@@ -449,6 +524,75 @@
   "options_save_advanced_config": {
     "message": "保存高级配置"
   },
+  "options_nav_hls_filter": {
+    "message": "HLS 广告过滤"
+  },
+  "options_nav_hls_filter_desc": {
+    "message": "广告过滤开关、评分阈值、指纹库、自定义规则"
+  },
+  "options_save_hls_filter_config": {
+    "message": "保存广告过滤配置"
+  },
+  "options_stats_summary_title": {
+    "message": "累计统计"
+  },
+  "options_clear_stats": {
+    "message": "清除"
+  },
+  "options_confirm_clear_stats": {
+    "message": "确定清除所有统计数据？"
+  },
+  "options_stats_total_ads": {
+    "message": "已过滤广告分片"
+  },
+  "options_stats_total_ad_duration": {
+    "message": "节省广告时间"
+  },
+  "options_stats_total_content_duration": {
+    "message": "内容时长"
+  },
+  "options_stats_total_detections": {
+    "message": "报告次数"
+  },
+  "options_stats_top_hosts": {
+    "message": "Top 站点（按广告数）"
+  },
+  "options_stats_host": {
+    "message": "站点"
+  },
+  "options_stats_ads": {
+    "message": "广告数"
+  },
+  "options_stats_ad_duration": {
+    "message": "时长"
+  },
+  "options_stats_top_rules": {
+    "message": "命中规则"
+  },
+  "options_stats_rule": {
+    "message": "规则"
+  },
+  "options_stats_hits": {
+    "message": "命中"
+  },
+  "options_stats_recent_reports": {
+    "message": "最近报告"
+  },
+  "options_stats_time": {
+    "message": "时间"
+  },
+  "options_stats_ad_total": {
+    "message": "广告/总数"
+  },
+  "options_stats_unit_ads": {
+    "message": "个"
+  },
+  "options_expand": {
+    "message": "展开"
+  },
+  "options_collapse": {
+    "message": "收起"
+  },
   "options_saved": {
     "message": "已保存"
   },
@@ -460,6 +604,21 @@
   },
   "options_refresh": {
     "message": "刷新"
+  },
+  "options_stats_empty": {
+    "message": "暂无统计数据"
+  },
+  "options_view_full_stats": {
+    "message": "查看详细统计"
+  },
+  "options_stats_empty_title": {
+    "message": "暂无统计数据"
+  },
+  "options_stats_empty_desc": {
+    "message": "当 HLS 广告过滤检测到广告分片时，数据将自动记录到这里"
+  },
+  "options_refresh_remote_rules": {
+    "message": "刷新远程规则"
   },
   "options_delete": {
     "message": "删除"
@@ -541,60 +700,6 @@
   },
   "options_ad_patterns": {
     "message": "广告模式"
-  },
-  "options_stats_summary_title": {
-    "message": "累计统计"
-  },
-  "options_stats_total_ads": {
-    "message": "已过滤广告"
-  },
-  "options_stats_total_ad_duration": {
-    "message": "广告总时长"
-  },
-  "options_stats_total_detections": {
-    "message": "检测次数"
-  },
-  "options_stats_total_content_duration": {
-    "message": "内容总时长"
-  },
-  "options_no_stats": {
-    "message": "暂无统计"
-  },
-  "options_stats_top_hosts": {
-    "message": "Top 站点"
-  },
-  "options_stats_host": {
-    "message": "站点"
-  },
-  "options_stats_ads": {
-    "message": "广告数"
-  },
-  "options_stats_ad_duration": {
-    "message": "广告时长"
-  },
-  "options_stats_top_rules": {
-    "message": "Top 规则"
-  },
-  "options_stats_rule": {
-    "message": "规则"
-  },
-  "options_stats_hits": {
-    "message": "命中"
-  },
-  "options_stats_recent_reports": {
-    "message": "最近报告"
-  },
-  "options_stats_time": {
-    "message": "时间"
-  },
-  "options_stats_ad_total": {
-    "message": "广告/总数"
-  },
-  "options_confirm_clear_stats": {
-    "message": "确定清除所有统计数据？"
-  },
-  "options_clear_stats": {
-    "message": "清除统计"
   },
   "options_samples_title": {
     "message": "广告样本"
@@ -732,5 +837,48 @@
   },
   "badge_download_failed": {
     "message": "下载失败"
+  },
+  "badge_runtime_ad_detected": {
+    "message": "⏭ 运行时检测到广告 $1$s (已记录, 下次自动跳过)",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "badge_seekbar_reset_detected": {
+    "message": "⏭ 检测到广告插入 (seekbar 重置), 记录中..."
+  },
+  "badge_ad_skipped": {
+    "message": "⏭ 已自动跳过广告 $1$s",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "options_no_video_element": {
+    "message": "未找到 video 元素"
+  },
+  "options_rule_host": {
+    "message": "host"
+  },
+  "options_rule_threshold": {
+    "message": "threshold"
+  },
+  "options_rule_mode": {
+    "message": "mode"
+  },
+  "options_rule_all": {
+    "message": "(all)"
+  },
+  "options_rule_default": {
+    "message": "default"
+  },
+  "options_is_empty": {
+    "message": "为空"
+  },
+  "options_rules_count": {
+    "message": "条规则"
   }
 }

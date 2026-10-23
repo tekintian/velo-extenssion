@@ -180,7 +180,7 @@ export function registerMediaHandlers(): void {
           const b64 = btoa(bin)
           const dataUrl = `data:application/vnd.apple.mpegurl;base64,${b64}`
           const { sendToNdm } = await import('./download-client')
-          const r = await sendToNdm(dataUrl, fileName || cleanedCtx.pageTitle, downloadExtra)
+          const r = await sendToNdm(dataUrl, fileName || cleanedCtx.pageTitle, cfg, downloadExtra)
           return { success: r.success, message: r.message }
         }
         // native 模式：浏览器原生下载（仅在无 PushClient 且 cfg.client=native 时到达）
@@ -323,12 +323,13 @@ export function registerMediaHandlers(): void {
     const cfg = message.payload
     await setDownloadConfig({
       client: cfg.client ?? 'native',
-      rpcHost: cfg.rpcHost ?? 'localhost',
-      rpcPort: cfg.rpcPort ?? 16816,
+      rpcUrl: cfg.rpcUrl ?? 'http://127.0.0.1:16816/jsonrpc',
       rpcSecret: cfg.rpcSecret ?? '',
-      veloHost: cfg.veloHost ?? '127.0.0.1',
-      veloPort: cfg.veloPort ?? 16888,
+      veloUrl: cfg.veloUrl ?? 'ws://127.0.0.1:16888/ws',
       veloToken: cfg.veloToken ?? '',
+      headerLevel: cfg.headerLevel ?? 'full',
+      mergeFormat: cfg.mergeFormat ?? 'ts',
+      autoPush: cfg.autoPush ?? false,
     })
     logger.info('[media] download config saved:', cfg.client)
     return { success: true as const }

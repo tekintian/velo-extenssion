@@ -5,7 +5,7 @@ import '@/assets/options.css'
 
 const PAGES = [
   {
-    id: 'config',
+    id: 'general',
     icon: '⚙️',
     titleKey: 'options_nav_config',
     descKey: 'options_nav_config_desc',
@@ -19,25 +19,32 @@ const PAGES = [
     color: '#fa541c',
   },
   {
-    id: 'advanced',
-    icon: '🧬',
-    titleKey: 'options_nav_advanced',
-    descKey: 'options_nav_advanced_desc',
+    id: 'hls-filter',
+    icon: '🛡️',
+    titleKey: 'options_nav_hls_filter',
+    descKey: 'options_nav_hls_filter_desc',
     color: '#722ed1',
   },
   {
-    id: 'test',
+    id: 'hls-test',
     icon: '🧪',
     titleKey: 'options_nav_test',
     descKey: 'options_nav_test_desc',
     color: '#13c2c2',
   },
   {
-    id: 'rules',
+    id: 'hls-rules',
     icon: '📋',
     titleKey: 'options_nav_rules',
     descKey: 'options_nav_rules_desc',
     color: '#52c41a',
+  },
+  {
+    id: 'hls-samples',
+    icon: '🔬',
+    titleKey: 'options_nav_samples',
+    descKey: 'options_nav_samples_desc',
+    color: '#fa8c16',
   },
   {
     id: 'stats',
@@ -47,18 +54,18 @@ const PAGES = [
     color: '#1890ff',
   },
   {
-    id: 'samples',
-    icon: '🔬',
-    titleKey: 'options_nav_samples',
-    descKey: 'options_nav_samples_desc',
-    color: '#fa8c16',
-  },
-  {
     id: 'data',
     icon: '💾',
     titleKey: 'options_nav_data',
     descKey: 'options_nav_data_desc',
     color: '#eb2f96',
+  },
+  {
+    id: 'about',
+    icon: 'ℹ️',
+    titleKey: 'options_nav_about',
+    descKey: 'options_nav_about_desc',
+    color: '#666',
   },
 ] as const
 
@@ -100,10 +107,6 @@ function OptionsIndex() {
         </div>
       </header>
 
-      <div className="options-notice">
-        {i18n('options_notice_auth')}
-      </div>
-
       <div className="options-nav-grid">
         {PAGES.map((page) => (
           <a
@@ -129,4 +132,8 @@ function OptionsIndex() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<OptionsIndex />)
+const rootEl = document.getElementById('root')!
+if (!(rootEl as any)._reactRoot) {
+  ;(rootEl as any)._reactRoot = createRoot(rootEl)
+}
+;(rootEl as any)._reactRoot.render(<OptionsIndex />)

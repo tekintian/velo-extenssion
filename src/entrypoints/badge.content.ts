@@ -173,7 +173,7 @@ export default defineContentScript({
         if (v) {
           sendResponse({ ok: true, currentTime: v.currentTime || 0, duration: v.duration || 0, src: v.currentSrc || v.src || '' })
         } else {
-          sendResponse({ ok: false, error: '未找到 video 元素' })
+          sendResponse({ ok: false, error: i18n('options_no_video_element') ?? 'No video element found' })
         }
         return true // 异步 sendResponse
       }
@@ -274,7 +274,7 @@ export default defineContentScript({
           const range = { start: adSkipState.runtimeAdStart, end: t, duration: t - adSkipState.runtimeAdStart, runtime: true }
           adSkipState.ranges.push(range)
           adSkipState.inRuntimeAd = false
-          showSkipToast(`⏭ 运行时检测到广告 ${range.duration.toFixed(1)}s (已记录, 下次自动跳过)`)
+          showSkipToast(i18n('badge_runtime_ad_detected', [range.duration.toFixed(1)]) ?? `⏭ Ad detected ${range.duration.toFixed(1)}s (recorded, will skip next time)`)
           adSkipState.prevTime = t
           return
         }
@@ -283,7 +283,7 @@ export default defineContentScript({
           adSkipState.seekbarResetCount++
           adSkipState.inRuntimeAd = true
           adSkipState.runtimeAdStart = adSkipState.prevTime
-          showSkipToast('⏭ 检测到广告插入 (seekbar 重置), 记录中...')
+          showSkipToast(i18n('badge_seekbar_reset_detected') ?? '⏭ Ad insertion detected (seekbar reset), recording...')
           adSkipState.prevTime = t
           return
         }
@@ -293,7 +293,7 @@ export default defineContentScript({
             if (t >= r.start && t < r.end) {
               adSkipState.skipping = true
               video.currentTime = r.end + 0.05
-              showSkipToast(`⏭ 已自动跳过广告 ${(r.duration || 0).toFixed(1)}s`)
+              showSkipToast(i18n('badge_ad_skipped', [(r.duration || 0).toFixed(1)]) ?? `⏭ Ad skipped ${(r.duration || 0).toFixed(1)}s`)
               setTimeout(() => {
                 adSkipState.skipping = false
               }, 500)

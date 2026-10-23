@@ -193,10 +193,67 @@
     "message": "Back to Settings"
   },
   "options_nav_config": {
-    "message": "Basic Config"
+    "message": "General"
   },
   "options_nav_config_desc": {
-    "message": "Global toggle, desktop pairing, push, ad filter"
+    "message": "Global toggle, language, HLS ad filter"
+  },
+  "options_language_title": {
+    "message": "Language"
+  },
+  "options_language_label": {
+    "message": "Interface Language"
+  },
+  "options_hls_filter_title": {
+    "message": "HLS Ad Filter"
+  },
+  "options_enable_hls_filter": {
+    "message": "Enable HLS Ad Segment Filter"
+  },
+  "options_hls_filter_desc": {
+    "message": "Automatically detect and filter ad segments in m3u8 streams"
+  },
+  "options_version_label": {
+    "message": "Version"
+  },
+  "options_name_label": {
+    "message": "Name"
+  },
+  "options_description_label": {
+    "message": "Description"
+  },
+  "options_extension_enabled": {
+    "message": "Extension Master Switch"
+  },
+  "options_extension_enabled_desc": {
+    "message": "When turned off, all sniffing, filtering and push functions will be paused"
+  },
+  "options_nav_about": {
+    "message": "About"
+  },
+  "options_nav_about_desc": {
+    "message": "Extension info, features, links"
+  },
+  "options_about_features": {
+    "message": "Features"
+  },
+  "options_about_feature_1": {
+    "message": "m3u8 / mpd stream sniffing and extraction"
+  },
+  "options_about_feature_2": {
+    "message": "HLS ad segment intelligent filtering"
+  },
+  "options_about_feature_3": {
+    "message": "One-click push to Velo desktop for download"
+  },
+  "options_about_feature_4": {
+    "message": "Supports Aria2, NDM, browser native and more download methods"
+  },
+  "options_about_links": {
+    "message": "Links"
+  },
+  "options_about_author": {
+    "message": "Author"
   },
   "options_nav_download": {
     "message": "Download"
@@ -204,56 +261,35 @@
   "options_nav_download_desc": {
     "message": "Download client selection, delivery mode, test download"
   },
-  "options_nav_advanced": {
-    "message": "Advanced"
-  },
-  "options_nav_advanced_desc": {
-    "message": "Fingerprint, filter behavior, custom rules"
-  },
   "options_nav_test": {
-    "message": "m3u8 Test"
+    "message": "HLS Test"
   },
   "options_nav_test_desc": {
-    "message": "Paste URL to test ad detection, view matched rules and cleaned result"
+    "message": "Paste m3u8 URL to test ad detection, view matched rules and cleaned result"
   },
   "options_nav_rules": {
-    "message": "Rules"
+    "message": "HLS Rules"
   },
   "options_nav_rules_desc": {
     "message": "View built-in/remote/user rules, review auto-suggestions"
+  },
+  "options_nav_samples": {
+    "message": "HLS Samples"
+  },
+  "options_nav_samples_desc": {
+    "message": "Ad sample management: capture, view, delete"
   },
   "options_nav_stats": {
     "message": "Statistics"
   },
   "options_nav_stats_desc": {
-    "message": "Filter stats, top hosts, rule hit ranking, recent reports"
-  },
-  "options_nav_samples": {
-    "message": "Samples"
-  },
-  "options_nav_samples_desc": {
-    "message": "Ad sample management: capture, view, delete"
+    "message": "HLS ad filter cumulative stats, top hosts, rule hits, recent reports"
   },
   "options_nav_data": {
     "message": "Data"
   },
   "options_nav_data_desc": {
     "message": "Export/import backup data, privacy notice"
-  },
-  "options_pairing_title": {
-    "message": "Desktop Pairing"
-  },
-  "options_port_label": {
-    "message": "Desktop Port"
-  },
-  "options_token_label": {
-    "message": "Pairing Token"
-  },
-  "options_save_pairing": {
-    "message": "Save Pairing"
-  },
-  "options_test_connection": {
-    "message": "Test Connection"
   },
   "options_push_title": {
     "message": "Push Configuration"
@@ -281,9 +317,6 @@
   },
   "options_save_filter": {
     "message": "Save"
-  },
-  "options_advanced_config_title": {
-    "message": "Advanced Ad Filter Config"
   },
   "options_fingerprint_title": {
     "message": "Fingerprint"
@@ -320,6 +353,15 @@
       }
     }
   },
+  "options_clear_fingerprints": {
+    "message": "Clear Learned Fingerprints"
+  },
+  "options_confirm_clear_fingerprints": {
+    "message": "Are you sure you want to clear all learned fingerprints? This action cannot be undone."
+  },
+  "options_clear_fingerprints_ok": {
+    "message": "Fingerprint library cleared"
+  },
   "options_filter_behavior_title": {
     "message": "Filter Behavior"
   },
@@ -328,6 +370,12 @@
   },
   "options_show_page_badge": {
     "message": "Show page badge (display filtered ad count near video)"
+  },
+  "options_show": {
+    "message": "Show"
+  },
+  "options_hide": {
+    "message": "Hide"
   },
   "options_keep_discontinuity": {
     "message": "Fill DISCONTINUITY on ad gaps (add marker after removing ad segments)"
@@ -359,6 +407,9 @@
   "options_download_client_desc": {
     "message": "Configure which client to download sniffed media to"
   },
+  "options_default_url": {
+    "message": "Default URL"
+  },
   "options_client_type": {
     "message": "Client type"
   },
@@ -386,11 +437,8 @@
   "options_velo_protocol": {
     "message": "WebSocket JSON push protocol"
   },
-  "options_rpc_host": {
-    "message": "RPC Host"
-  },
-  "options_rpc_port": {
-    "message": "RPC Port"
+  "options_rpc_url": {
+    "message": "RPC URL"
   },
   "options_rpc_secret": {
     "message": "RPC Secret (optional)"
@@ -398,11 +446,8 @@
   "options_rpc_secret_placeholder": {
     "message": "Leave empty for no key"
   },
-  "options_velo_host": {
-    "message": "Push server host"
-  },
-  "options_velo_port": {
-    "message": "Push server port"
+  "options_velo_url": {
+    "message": "Push URL"
   },
   "options_velo_token": {
     "message": "Pairing token"
@@ -417,10 +462,37 @@
     "message": "Browser native download uses Chrome built-in download manager. Click the download button on media items."
   },
   "options_velo_hint": {
-    "message": "velo (Motrix Lite) receives pushes via WebSocket. Ensure velo is running with push server enabled (default port 16888). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
+    "message": "velo (Motrix Lite) receives pushes via WebSocket. Ensure velo is running with push server enabled (default ws://127.0.0.1:16888/ws). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
   },
   "options_hls_delivery_mode": {
     "message": "Delivery Mode"
+  },
+  "options_header_forward_title": {
+    "message": "Header Forwarding"
+  },
+  "options_header_forward_desc": {
+    "message": "Which page request headers to forward to the download client when downloading sniffed media."
+  },
+  "options_header_full": {
+    "message": "Full Forward"
+  },
+  "options_header_full_desc": {
+    "message": "Cookie / Authorization / User-Agent / Referer / Origin"
+  },
+  "options_header_partial": {
+    "message": "Basic Only"
+  },
+  "options_header_partial_desc": {
+    "message": "User-Agent / Referer / Origin, no Cookie / Authorization"
+  },
+  "options_header_none": {
+    "message": "No Forward"
+  },
+  "options_header_none_desc": {
+    "message": "Do not carry any page request headers"
+  },
+  "options_header_forward_hint": {
+    "message": "Lowering the forwarding level may cause authenticated media downloads to fail. Make sure the download client address is trusted."
   },
   "options_test_download": {
     "message": "Test Download"
@@ -437,6 +509,9 @@
   "options_download_sent": {
     "message": "✓ Download sent"
   },
+  "options_test_failed": {
+    "message": "Failed"
+  },
   "options_custom_rules_title": {
     "message": "Custom Rules"
   },
@@ -449,6 +524,75 @@
   "options_save_advanced_config": {
     "message": "Save Advanced Config"
   },
+  "options_nav_hls_filter": {
+    "message": "HLS Ad Filter"
+  },
+  "options_nav_hls_filter_desc": {
+    "message": "Ad filter switch, score threshold, fingerprint library, custom rules"
+  },
+  "options_save_hls_filter_config": {
+    "message": "Save Ad Filter Config"
+  },
+  "options_stats_summary_title": {
+    "message": "Filter Statistics"
+  },
+  "options_clear_stats": {
+    "message": "Clear"
+  },
+  "options_confirm_clear_stats": {
+    "message": "Clear all statistics data?"
+  },
+  "options_stats_total_ads": {
+    "message": "Ads Filtered"
+  },
+  "options_stats_total_ad_duration": {
+    "message": "Ad Duration"
+  },
+  "options_stats_total_content_duration": {
+    "message": "Content Duration"
+  },
+  "options_stats_total_detections": {
+    "message": "Detections"
+  },
+  "options_stats_top_hosts": {
+    "message": "Top Hosts"
+  },
+  "options_stats_host": {
+    "message": "Host"
+  },
+  "options_stats_ads": {
+    "message": "Ads"
+  },
+  "options_stats_ad_duration": {
+    "message": "Duration"
+  },
+  "options_stats_top_rules": {
+    "message": "Top Rules"
+  },
+  "options_stats_rule": {
+    "message": "Rule"
+  },
+  "options_stats_hits": {
+    "message": "Hits"
+  },
+  "options_stats_recent_reports": {
+    "message": "Recent Reports"
+  },
+  "options_stats_time": {
+    "message": "Time"
+  },
+  "options_stats_ad_total": {
+    "message": "Ads/Total"
+  },
+  "options_stats_unit_ads": {
+    "message": "ads"
+  },
+  "options_expand": {
+    "message": "Expand"
+  },
+  "options_collapse": {
+    "message": "Collapse"
+  },
   "options_saved": {
     "message": "Saved"
   },
@@ -460,6 +604,21 @@
   },
   "options_refresh": {
     "message": "Refresh"
+  },
+  "options_stats_empty": {
+    "message": "No statistics yet"
+  },
+  "options_view_full_stats": {
+    "message": "View Full Statistics"
+  },
+  "options_stats_empty_title": {
+    "message": "No Statistics Yet"
+  },
+  "options_stats_empty_desc": {
+    "message": "Data will be recorded here automatically when HLS ad filtering detects ad segments"
+  },
+  "options_refresh_remote_rules": {
+    "message": "Refresh Remote Rules"
   },
   "options_delete": {
     "message": "Delete"
@@ -541,60 +700,6 @@
   },
   "options_ad_patterns": {
     "message": "Ad Patterns"
-  },
-  "options_stats_summary_title": {
-    "message": "Summary"
-  },
-  "options_stats_total_ads": {
-    "message": "Filtered Ads"
-  },
-  "options_stats_total_ad_duration": {
-    "message": "Total Ad Duration"
-  },
-  "options_stats_total_detections": {
-    "message": "Detections"
-  },
-  "options_stats_total_content_duration": {
-    "message": "Total Content Duration"
-  },
-  "options_no_stats": {
-    "message": "No stats"
-  },
-  "options_stats_top_hosts": {
-    "message": "Top Hosts"
-  },
-  "options_stats_host": {
-    "message": "Host"
-  },
-  "options_stats_ads": {
-    "message": "Ads"
-  },
-  "options_stats_ad_duration": {
-    "message": "Ad Duration"
-  },
-  "options_stats_top_rules": {
-    "message": "Top Rules"
-  },
-  "options_stats_rule": {
-    "message": "Rule"
-  },
-  "options_stats_hits": {
-    "message": "Hits"
-  },
-  "options_stats_recent_reports": {
-    "message": "Recent Reports"
-  },
-  "options_stats_time": {
-    "message": "Time"
-  },
-  "options_stats_ad_total": {
-    "message": "Ads/Total"
-  },
-  "options_confirm_clear_stats": {
-    "message": "Clear all statistics?"
-  },
-  "options_clear_stats": {
-    "message": "Clear Stats"
   },
   "options_samples_title": {
     "message": "Ad Samples"
@@ -732,5 +837,48 @@
   },
   "badge_download_failed": {
     "message": "Download failed"
+  },
+  "badge_runtime_ad_detected": {
+    "message": "⏭ Ad detected $1$s (recorded, will skip next time)",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "badge_seekbar_reset_detected": {
+    "message": "⏭ Ad insertion detected (seekbar reset), recording..."
+  },
+  "badge_ad_skipped": {
+    "message": "⏭ Ad skipped $1$s",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "options_no_video_element": {
+    "message": "No video element found"
+  },
+  "options_rule_host": {
+    "message": "host"
+  },
+  "options_rule_threshold": {
+    "message": "threshold"
+  },
+  "options_rule_mode": {
+    "message": "mode"
+  },
+  "options_rule_all": {
+    "message": "(all)"
+  },
+  "options_rule_default": {
+    "message": "default"
+  },
+  "options_is_empty": {
+    "message": "is empty"
+  },
+  "options_rules_count": {
+    "message": "rules"
   }
 }

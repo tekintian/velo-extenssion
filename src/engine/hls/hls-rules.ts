@@ -10,16 +10,6 @@ import type { SiteRule } from './types'
 
 /** 内置规则库 */
 export const BUILTIN_SITE_RULES: SiteRule[] = [
-  // DRM 保护站点：保留全部分片，避免误删付费视频的 DRM/加密内容导致播放损坏
-  // 这些站点使用 Widevine/PlayReady/FairPlay，分片被删会破坏解密链
-  {
-    id: 'drm-protected-sites',
-    name: 'DRM 保护站点（不过滤）',
-    hostPattern: '(?:netflix|disneyplus|primevideo|hbomax|hulu|peacocktv|paramountplus|discoveryplus|showtime|starz|tv\\.apple|spotify|tidal)\\.',
-    adUrlPatterns: [],
-    scoreThreshold: 99, // 极高阈值 = 实际不触发广告检测
-    forceKeep: ['.*'], // 强制保留所有分片
-  },
   {
     id: 'generic-ad-CDN',
     name: '通用广告 CDN 域名',
@@ -138,7 +128,7 @@ export async function getSiteRule(pageHost: string): Promise<{
 }> {
   const userRules = await loadUserRules()
   const remoteRules = getRemoteRulesCached()
-  const all = [...BUILTIN_SITE_RULES, ...remoteRules, ...userRules]
+  const all = [...BUILTIN_SITE_RULES, ...remoteRules, ...userRules].filter((r) => r.id !== 'drm-protected-sites')
   const matches = all.filter((r) => r && hostMatch(pageHost, r.hostPattern))
   if (matches.length === 0) {
     return { rule: null, patterns: [], forceKeep: [] }
@@ -188,7 +178,7 @@ export async function listAllRules(): Promise<Array<SiteRule & { _builtin?: bool
   const builtin = BUILTIN_SITE_RULES.map((r) => ({ ...r, _builtin: true }))
   const remote = remoteRules.map((r) => ({ ...r, _remote: true }))
   const user = userRules.map((r) => ({ ...r, _user: true }))
-  return [...builtin, ...remote, ...user]
+  return [...builtin, ...remote, ...user].filter((r) => r.id !== 'drm-protected-sites')
 }
 
 /**

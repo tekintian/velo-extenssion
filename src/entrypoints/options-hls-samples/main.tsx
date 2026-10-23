@@ -7,9 +7,9 @@ import '@/assets/options.css'
 interface SampleItem {
   id: string
   currentTime: number
-  windowSegments: number
-  host: string
-  timestamp: number
+  window: { length: number }
+  pageHost: string
+  ts: number
   baseUrl: string
 }
 
@@ -31,14 +31,14 @@ function SamplesPage() {
   const handleCapture = async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id) throw new Error('未找到活动标签页')
+      if (!tab?.id) throw new Error(i18n('options_no_active_tab'))
       const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' })
-      if (!pb?.ok) throw new Error('读取播放状态失败: ' + (pb?.error || '?'))
+      if (!pb?.ok) throw new Error(i18n('options_playback_read_fail') + ': ' + (pb?.error || '?'))
       const result = await chrome.runtime.sendMessage({
         type: 'captureSample',
         payload: { tabId: tab.id, currentTime: pb.currentTime },
       })
-      if (!result?.success) throw new Error('捕获失败: ' + (result?.message || result?.error || '?'))
+      if (!result?.success) throw new Error(i18n('popup_capture_fail', [result?.message || result?.error || '?']))
       alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime)}s)`)
       void loadSamples()
     } catch (e) { alert(String(e)) }
@@ -86,10 +86,10 @@ function SamplesPage() {
               {samples.map((s) => (
                 <tr key={s.id}>
                   <td className="sample-id">{s.id.slice(0, 8)}</td>
-                  <td>{s.host}</td>
+                  <td>{s.pageHost}</td>
                   <td>{s.currentTime.toFixed(1)}s</td>
-                  <td>{s.windowSegments}</td>
-                  <td>{new Date(s.timestamp).toLocaleString()}</td>
+                  <td>{s.window?.length ?? 0}</td>
+                  <td>{new Date(s.ts).toLocaleString()}</td>
                   <td>
                     <button className="btn-sm btn-danger" onClick={() => void handleDelete(s.id)}>
                       {i18n('options_delete')}
@@ -117,4 +117,8 @@ function SamplesPage() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<SamplesPage />)
+const rootEl = document.getElementById('root')!
+if (!(rootEl as any)._reactRoot) {
+  ;(rootEl as any)._reactRoot = createRoot(rootEl)
+}
+;(rootEl as any)._reactRoot.render(<SamplesPage />)

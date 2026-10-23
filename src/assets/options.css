@@ -111,7 +111,41 @@ body {
   flex-wrap: wrap;
 }
 
+.section-header-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
 
+.section-header-with-action h2 {
+  margin-bottom: 0;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 6px 8px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e8e8e8;
+  font-weight: 500;
+  color: #666;
+}
+
+.data-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+}
+
+.data-table tr:hover td {
+  background: #fafafa;
+}
 
 .options-section {
   background: #fff;
@@ -391,16 +425,22 @@ body {
 }
 
 .rule-detail {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
   color: #888;
   margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.rule-detail span {
+  word-break: break-all;
+  display: inline-block;
+  margin-right: 12px;
+  margin-bottom: 2px;
 }
 
 .rule-patterns {
-  font-size: 12px;
   color: #666;
+  word-break: break-all;
+  font-size: 12px;
 }
 
 .suggestion-info {
@@ -638,6 +678,30 @@ body {
   line-height: 1.5;
 }
 
+.hint-box-url {
+  background: #f6ffed;
+  border-color: #b7eb8f;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.url-label {
+  font-weight: 500;
+  color: #389e0d;
+  white-space: nowrap;
+}
+
+.url-code {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
+  color: #237804;
+  background: #d9f7be;
+  padding: 2px 8px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
 /* ===== Config: Client Grid ===== */
 .client-grid {
   display: grid;
@@ -802,6 +866,13 @@ body {
   background: #fff1f0;
 }
 
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
 .hls-data-grid-4 {
   grid-template-columns: repeat(4, 1fr);
 }
@@ -837,4 +908,138 @@ body {
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;
+}
+
+/* ===== General Page Info Grid ===== */
+.options-info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f9f9f9;
+  border-radius: 8px;
+}
+
+.info-label {
+  font-size: 13px;
+  color: #666;
+  min-width: 60px;
+  font-weight: 500;
+}
+
+.info-value {
+  font-size: 13px;
+  color: #333;
+  font-weight: 600;
+}
+
+/* ===== Input with visibility toggle ===== */
+.input-with-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.input-with-toggle input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.input-with-toggle input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.15);
+}
+
+.btn-toggle-visibility {
+  padding: 6px 10px;
+  background: #f5f5f5;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-toggle-visibility:hover {
+  background: #e8e8e8;
+}
+
+/* ===== Stats Block (NDM style) ===== */
+.stat-block {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 8px;
+  border: 1px solid #eee;
+}
+
+.stat-block:last-child {
+  margin-bottom: 0;
+}
+
+.stat-block-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 10px;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 13px;
+  color: #333;
+}
+
+.report-label {
+  color: #666;
+  font-weight: 500;
+}
+
+.stat-num {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.b-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed #eee;
+}
+
+.b-stat:last-child {
+  border-bottom: none;
+}
+
+.recent-list {
+  font-size: 12px;
+  color: #78716c;
+  line-height: 1.8;
+}
+
+.recent-item {
+  word-break: break-all;
+}
+
+.stat-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eee;
 }

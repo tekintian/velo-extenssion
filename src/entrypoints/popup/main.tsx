@@ -293,4 +293,8 @@ function Popup() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Popup />)
+const rootEl = document.getElementById('root')!
+if (!(rootEl as any)._reactRoot) {
+  ;(rootEl as any)._reactRoot = createRoot(rootEl)
+}
+;(rootEl as any)._reactRoot.render(<Popup />)

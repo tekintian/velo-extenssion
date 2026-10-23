@@ -51,31 +51,37 @@ export interface DashPair {
   readonly audio: MediaItem
 }
 
+/** 请求头转发级别 */
+export type HeaderForwardLevel = 'full' | 'partial' | 'none'
+
 /** 下载客户端配置 */
 export interface DownloadClientConfig {
   /** 客户端类型 */
   readonly client: 'ndm' | 'aria2' | 'velo' | 'native'
-  /** aria2 RPC host */
-  readonly rpcHost: string
-  /** aria2 RPC port (Velo 默认 16816) */
-  readonly rpcPort: number
+  /** aria2 RPC 完整 URL (如 http://127.0.0.1:16816/jsonrpc) */
+  readonly rpcUrl: string
   /** aria2 RPC secret (可选) */
   readonly rpcSecret: string
-  /** velo push server host */
-  readonly veloHost: string
-  /** velo push server port (默认 16888) */
-  readonly veloPort: number
+  /** velo push server 完整 URL (如 ws://127.0.0.1:16888/ws) */
+  readonly veloUrl: string
   /** velo push server token (配对认证) */
   readonly veloToken: string
+  /** 请求头转发级别 */
+  readonly headerLevel: HeaderForwardLevel
+  /** 合并格式 */
+  readonly mergeFormat: 'ts' | 'mp4' | 'mkv' | 'keep'
+  /** 自动推送 */
+  readonly autoPush: boolean
 }
 
 /** 默认下载客户端配置 */
 export const DEFAULT_DOWNLOAD_CONFIG: DownloadClientConfig = {
-  client: 'native',
-  rpcHost: 'localhost',
-  rpcPort: 16816,
+  client: 'velo',
+  rpcUrl: 'http://127.0.0.1:16816/jsonrpc',
   rpcSecret: '',
-  veloHost: '127.0.0.1',
-  veloPort: 16888,
+  veloUrl: 'ws://127.0.0.1:16888/ws',
   veloToken: 'ndm-auto',
+  headerLevel: 'full',
+  mergeFormat: 'ts',
+  autoPush: false,
 }

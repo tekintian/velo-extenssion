@@ -39,22 +39,21 @@ export interface PairingInfo {
 export interface VeloConfig {
   port: number
   token: string
-  autoPush: boolean
-  mergeFormat: 'ts' | 'mp4' | 'mkv' | 'keep'
   pushChannel: 'ws' | 'http' | 'deep-link'
-  scoreThreshold: number
-  enableFilter: boolean
+  /** @deprecated 已迁移到 DownloadClientConfig.autoPush */
+  autoPush?: boolean
+  /** @deprecated 已迁移到 DownloadClientConfig.mergeFormat */
+  mergeFormat?: 'ts' | 'mp4' | 'mkv' | 'keep'
+  /** @deprecated 已迁移到 HLS 广告过滤配置 */
+  scoreThreshold?: number
+  /** @deprecated 已迁移到 HLS 广告过滤配置 */
+  enableFilter?: boolean
 }
 
 export const DEFAULT_CONFIG: VeloConfig = {
   port: DEFAULT_PORT,
   token: '',
-  // 默认关闭自动推送：用户应在 options 显式开启，避免播放任意视频都自动推送到桌面端
-  autoPush: false,
-  mergeFormat: 'ts',
   pushChannel: 'ws',
-  scoreThreshold: 3,
-  enableFilter: true,
 }
 
 export interface PushMessage {
@@ -112,8 +111,7 @@ export interface Settings {
   enableAdSkip: boolean
   showPageBadge: boolean
   downloadClient: 'aria2' | 'ndm' | 'velo' | 'native'
-  rpcHost: string
-  rpcPort: number
+  rpcUrl: string
   rpcSecret: string
 }
 
@@ -123,7 +121,6 @@ export const DEFAULT_SETTINGS: Settings = {
   enableAdSkip: true,
   showPageBadge: true,
   downloadClient: 'velo',
-  rpcHost: '127.0.0.1',
-  rpcPort: 16888,
+  rpcUrl: 'http://127.0.0.1:16888/jsonrpc',
   rpcSecret: '',
 }

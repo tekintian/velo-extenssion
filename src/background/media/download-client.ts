@@ -13,7 +13,7 @@
 import { logger } from '@/lib/logger'
 import { persistentStorage } from '@/lib/storage'
 import { DEFAULT_DOWNLOAD_CONFIG } from './types'
-import type { DownloadClientConfig } from './types'
+import type { DownloadClientConfig, HeaderForwardLevel } from './types'
 import type { MediaDescriptor } from '@/types'
 import { createPushClient } from '@/background/push-client'
 
@@ -63,9 +63,11 @@ export async function sendToDownloadClient(
     priority?: string | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
+  const cfg = await getDownloadConfig()
+
   if (pushClientInstance) {
     try {
-      const headers = buildVeloHeaders(extra)
+      const headers = buildVeloHeaders(extra, cfg.headerLevel)
       const isM3u8 = isHlsMedia(url, extra?.contentType)
       const msg = {
         action: (isM3u8 ? 'push_url' : 'push_normal') as 'push_url' | 'push_normal',
@@ -80,7 +82,7 @@ export async function sendToDownloadClient(
         options: {
           filename: fileName || extra?.title,
           output_dir: undefined as string | undefined,
-          merge_format: isM3u8 ? 'ts' : '',
+          merge_format: isM3u8 ? cfg.mergeFormat : '',
           extra_headers: undefined as Record<string, string> | undefined,
         },
       }
@@ -92,13 +94,12 @@ export async function sendToDownloadClient(
     }
   }
 
-  const cfg = await getDownloadConfig()
   try {
     switch (cfg.client) {
       case 'aria2':
         return await sendToAria2(url, fileName, cfg, extra)
       case 'ndm':
-        return await sendToNdm(url, fileName, extra)
+        return await sendToNdm(url, fileName, cfg, extra)
       case 'velo':
         return await sendToVelo(url, fileName, cfg, extra)
       case 'native':
@@ -170,16 +171,17 @@ export async function sendToAria2(
     logger.info('[download] data URL 已落地为', aria2Url, '→ aria2.addUri')
   }
 
-  const rpcUrl = `http://${cfg.rpcHost}:${cfg.rpcPort}/jsonrpc`
+  const rpcUrl = cfg.rpcUrl
   const params: unknown[] = []
   if (cfg.rpcSecret) params.push(`token:${cfg.rpcSecret}`)
   params.push([aria2Url])
   const opts: Record<string, string | string[]> = {}
   if (fileName) opts.out = fileName
 
-  // 构建 HTTP 头：Origin + Referer + Cookie + 自定义 x-* 头
+  // 构建 HTTP 头：根据 headerLevel 控制转发范围
+  const level = cfg.headerLevel ?? 'full'
   const headers: string[] = []
-  if (extra?.pageUrl) {
+  if (level !== 'none' && extra?.pageUrl) {
     try {
       headers.push(`Origin: ${new URL(extra.pageUrl).origin}`)
       let referer = extra.pageUrl.trim()
@@ -188,16 +190,22 @@ export async function sendToAria2(
       headers.push(`Referer: ${referer}`)
     } catch { /* ignore */ }
   }
-  if (extra?.cookies) {
+  if (level === 'full' && extra?.cookies) {
     headers.push(`Cookie: ${extra.cookies}`)
   }
-  if (extra?.requestHeaders) {
+  if (level !== 'none' && extra?.requestHeaders) {
     for (const [name, value] of Object.entries(extra.requestHeaders)) {
       // 过滤请求体相关头（这些是 POST body 的元数据，不应作为下载请求头透传）
       const lower = name.toLowerCase()
-      if (lower !== 'content-type' && lower !== 'content-length' && lower !== 'content-disposition') {
-        headers.push(`${name}: ${value}`)
+      if (lower === 'content-type' || lower === 'content-length' || lower === 'content-disposition') {
+        continue
       }
+      if (level === 'partial') {
+        if (lower === 'cookie' || lower === 'authorization') {
+          continue
+        }
+      }
+      headers.push(`${name}: ${value}`)
     }
   }
   if (headers.length > 0) {
@@ -302,12 +310,13 @@ let ndmWsReady = false
 export async function sendToNdm(
   url: string,
   fileName: string | undefined,
+  cfg: DownloadClientConfig,
   extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined },
 ): Promise<{ success: boolean; message?: string }> {
   return new Promise((resolve) => {
     try {
       if (ndmWs && ndmWsReady) {
-        ndmSendPayload(ndmWs, url, fileName, extra)
+        ndmSendPayload(ndmWs, url, fileName, extra, cfg.headerLevel)
         resolve({ success: true })
         return
       }
@@ -321,7 +330,7 @@ export async function sendToNdm(
         clearTimeout(timeout)
         ndmWs = ws
         ndmWsReady = true
-        ndmSendPayload(ws, url, fileName, extra)
+        ndmSendPayload(ws, url, fileName, extra, cfg.headerLevel)
         resolve({ success: true })
       }
       ws.onerror = () => {
@@ -340,8 +349,9 @@ export async function sendToNdm(
   })
 }
 
-function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined, extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined }): void {
+function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined, extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined }, headerLevel?: HeaderForwardLevel): void {
   // NDM WebSocket 协议（多行键值，移植自 bg.js V.I）:
+  const level = headerLevel ?? 'full'
   const method = extra?.method || 'GET'
   const pageUrl = extra?.pageUrl || ''
   const contentType = extra?.contentType || ''
@@ -359,7 +369,7 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
   if (fileName) b += `4:${fileName}\r\n`
   // === NDM V.I: 5: pageUrl ===
   if (pageUrl) b += `5:${pageUrl}\r\n`
-  if (pageUrl) {
+  if (level !== 'none' && pageUrl) {
     let c = pageUrl.trim()
     if (c) {
       try { b += `Origin: ${new URL(c).origin}\r\n` } catch { /* ignore */ }
@@ -368,7 +378,7 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
       b += `Referer: ${c}\r\n`
     }
   }
-  if (cookies) b += `Cookie: ${cookies}\r\n`
+  if (level === 'full' && cookies) b += `Cookie: ${cookies}\r\n`
   if (contentType) b += `Content-Type: ${contentType}\r\n`
   if (contentDisposition) {
     b += `Content-Disposition: ${contentDisposition}\r\n`
@@ -377,11 +387,12 @@ function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined
   }
   // === NDM V.I: x-* 自定义头（只推送 x- 开头的头） ===
   // NDM: for (e in a) N(e.toLowerCase(),"x-") && (b += e + ": " + a[e] + "\r\n")
-  if (requestHeaders) {
+  if (level !== 'none' && requestHeaders) {
     for (const [name, value] of Object.entries(requestHeaders)) {
-      if (name.toLowerCase().startsWith('x-')) {
-        b += `${name}: ${value}\r\n`
-      }
+      const lower = name.toLowerCase()
+      if (!lower.startsWith('x-')) continue
+      if (level === 'partial' && (lower === 'x-cookie' || lower === 'x-authorization')) continue
+      b += `${name}: ${value}\r\n`
     }
   }
   // POST body (移植自 NDM bg.js V.I: a.postData ? "__0NeatPostData9__:" + a.postData : "Content-Length: 0\r\n")
@@ -479,7 +490,7 @@ export async function sendToVelo(
     && !isHlsMedia(url, extra.contentType)
     && !url.startsWith('data:')
   ) {
-    const headInfo = await headPreflight(url, extra)
+    const headInfo = await headPreflight(url, extra, cfg.headerLevel)
     if (headInfo) {
       finalExtra = {
         ...extra,
@@ -494,11 +505,11 @@ export async function sendToVelo(
     }
   }
 
-  const wsUrl = `ws://${cfg.veloHost}:${cfg.veloPort}`
+  const wsUrl = cfg.veloUrl
   return new Promise((resolve) => {
     try {
       if (veloWs && veloWsReady) {
-        veloWsSendUrl(veloWs, url, fileName, cfg.veloToken, finalExtra)
+        veloWsSendUrl(veloWs, url, fileName, cfg.veloToken, finalExtra, cfg.headerLevel)
         resolve({ success: true })
         return
       }
@@ -511,14 +522,14 @@ export async function sendToVelo(
         clearTimeout(timeout)
         veloWs = ws
         veloWsReady = true
-        veloWsSendUrl(ws, url, fileName, cfg.veloToken, finalExtra)
+        veloWsSendUrl(ws, url, fileName, cfg.veloToken, finalExtra, cfg.headerLevel)
         resolve({ success: true })
       }
       ws.onerror = () => {
         clearTimeout(timeout)
         veloWs = null
         veloWsReady = false
-        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + 端口 ${cfg.veloPort} 开放）` })
+        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + URL 可访问）` })
       }
       ws.onclose = () => {
         veloWs = null
@@ -547,11 +558,11 @@ export async function sendToVeloM3u8(
     requestHeaders?: Record<string, string> | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
-  const wsUrl = `ws://${cfg.veloHost}:${cfg.veloPort}`
+  const wsUrl = cfg.veloUrl
   return new Promise((resolve) => {
     try {
       if (veloWs && veloWsReady) {
-        veloWsSendM3u8(veloWs, m3u8Text, baseUrl, fileName, cfg.veloToken, extra)
+        veloWsSendM3u8(veloWs, m3u8Text, baseUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
         resolve({ success: true })
         return
       }
@@ -564,14 +575,14 @@ export async function sendToVeloM3u8(
         clearTimeout(timeout)
         veloWs = ws
         veloWsReady = true
-        veloWsSendM3u8(ws, m3u8Text, baseUrl, fileName, cfg.veloToken, extra)
+        veloWsSendM3u8(ws, m3u8Text, baseUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
         resolve({ success: true })
       }
       ws.onerror = () => {
         clearTimeout(timeout)
         veloWs = null
         veloWsReady = false
-        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + 端口 ${cfg.veloPort} 开放）` })
+        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + URL 可访问）` })
       }
       ws.onclose = () => {
         veloWs = null
@@ -610,12 +621,21 @@ function buildFileName(descriptor: MediaDescriptor): string {
   return ''
 }
 
-export function buildVeloHeaders(extra?: {
-  pageUrl?: string | undefined
-  cookies?: string | undefined
-  requestHeaders?: Record<string, string> | undefined
-}): Record<string, string> | undefined {
+export function buildVeloHeaders(
+  extra?: {
+    pageUrl?: string | undefined
+    cookies?: string | undefined
+    requestHeaders?: Record<string, string> | undefined
+  },
+  level?: HeaderForwardLevel,
+): Record<string, string> | undefined {
   const headers: Record<string, string> = {}
+  const effectiveLevel = level ?? 'full'
+
+  if (effectiveLevel === 'none') {
+    return undefined
+  }
+
   if (extra?.pageUrl) {
     try {
       headers['Origin'] = new URL(extra.pageUrl).origin
@@ -625,17 +645,26 @@ export function buildVeloHeaders(extra?: {
       headers['Referer'] = referer
     } catch { /* ignore */ }
   }
-  if (extra?.cookies) {
+
+  if (effectiveLevel === 'full' && extra?.cookies) {
     headers['Cookie'] = extra.cookies
   }
+
   if (extra?.requestHeaders) {
     for (const [name, value] of Object.entries(extra.requestHeaders)) {
       const lower = name.toLowerCase()
-      if (lower !== 'content-type' && lower !== 'content-length' && lower !== 'content-disposition') {
-        headers[name] = value
+      if (lower === 'content-type' || lower === 'content-length' || lower === 'content-disposition') {
+        continue
       }
+      if (effectiveLevel === 'partial') {
+        if (lower === 'cookie' || lower === 'authorization') {
+          continue
+        }
+      }
+      headers[name] = value
     }
   }
+
   return Object.keys(headers).length > 0 ? headers : undefined
 }
 
@@ -671,6 +700,7 @@ export function buildVeloHeaders(extra?: {
 export async function headPreflight(
   url: string,
   extra?: { pageUrl?: string | undefined; cookies?: string | undefined; requestHeaders?: Record<string, string> | undefined },
+  level?: HeaderForwardLevel,
 ): Promise<{ contentType?: string | undefined; contentDisposition?: string | undefined; size?: number | undefined } | null> {
   try {
     const init: RequestInit = {
@@ -680,7 +710,7 @@ export async function headPreflight(
     }
     const headers: Record<string, string> = {}
     // 复用 buildVeloHeaders 的认证头集合（Origin/Referer/Cookie/x-*）
-    const authHeaders = buildVeloHeaders(extra)
+    const authHeaders = buildVeloHeaders(extra, level)
     if (authHeaders) {
       for (const [name, value] of Object.entries(authHeaders)) {
         headers[name] = value
@@ -720,7 +750,7 @@ function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined,
   requestBody?: string | undefined
   cookies?: string | undefined
   requestHeaders?: Record<string, string> | undefined
-}): void {
+}, headerLevel?: HeaderForwardLevel): void {
   const isM3u8 = /\.m3u8/i.test(url)
     || /mpegurl/i.test(extra?.contentType ?? '')
     || /m3u8/i.test(extra?.contentType ?? '')
@@ -738,7 +768,7 @@ function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined,
     // === HTTP 方法 + POST body 透传（移植自 NDM bg.js V.I __0NeatPostData9__） ===
     method: extra?.method ?? undefined,
     post_data: extra?.requestBody ?? undefined,
-    headers: buildVeloHeaders(extra),
+    headers: buildVeloHeaders(extra, headerLevel),
     options: {
       filename: fileName ?? undefined,
       output_dir: undefined as string | undefined,
@@ -761,7 +791,7 @@ function veloWsSendM3u8(ws: WebSocket, m3u8Text: string, baseUrl: string, fileNa
   pageUrl?: string | undefined
   cookies?: string | undefined
   requestHeaders?: Record<string, string> | undefined
-}): void {
+}, headerLevel?: HeaderForwardLevel): void {
   const msg = {
     version: 1,
     token,
@@ -769,7 +799,7 @@ function veloWsSendM3u8(ws: WebSocket, m3u8Text: string, baseUrl: string, fileNa
     m3u8_text: m3u8Text,
     url: undefined as string | undefined,
     base_url: baseUrl || undefined,
-    headers: buildVeloHeaders(extra),
+    headers: buildVeloHeaders(extra, headerLevel),
     options: {
       filename: fileName ?? undefined,
       output_dir: undefined as string | undefined,
@@ -799,11 +829,11 @@ export async function sendToVeloDash(
     requestHeaders?: Record<string, string> | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
-  const wsUrl = `ws://${cfg.veloHost}:${cfg.veloPort}`
+  const wsUrl = cfg.veloUrl
   return new Promise((resolve) => {
     try {
       if (veloWs && veloWsReady) {
-        veloWsSendDash(veloWs, videoUrl, audioUrl, fileName, cfg.veloToken, extra)
+        veloWsSendDash(veloWs, videoUrl, audioUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
         resolve({ success: true })
         return
       }
@@ -816,14 +846,14 @@ export async function sendToVeloDash(
         clearTimeout(timeout)
         veloWs = ws
         veloWsReady = true
-        veloWsSendDash(ws, videoUrl, audioUrl, fileName, cfg.veloToken, extra)
+        veloWsSendDash(ws, videoUrl, audioUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
         resolve({ success: true })
       }
       ws.onerror = () => {
         clearTimeout(timeout)
         veloWs = null
         veloWsReady = false
-        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + 端口 ${cfg.veloPort} 开放）` })
+        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + URL 可访问）` })
       }
       ws.onclose = () => {
         veloWs = null
@@ -839,7 +869,7 @@ function veloWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, fileN
   pageUrl?: string | undefined
   cookies?: string | undefined
   requestHeaders?: Record<string, string> | undefined
-}): void {
+}, headerLevel?: HeaderForwardLevel): void {
   const msg = {
     version: 1,
     token,
@@ -849,7 +879,7 @@ function veloWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, fileN
     url: undefined as string | undefined,
     m3u8_text: undefined as string | undefined,
     base_url: undefined as string | undefined,
-    headers: buildVeloHeaders(extra),
+    headers: buildVeloHeaders(extra, headerLevel),
     options: {
       filename: fileName ?? undefined,
       output_dir: undefined as string | undefined,
@@ -907,6 +937,7 @@ export async function pushHls(
     throw new Error('Push client not initialized')
   }
   const fileName = buildFileName(descriptor)
+  const level = _cachedConfig.headerLevel
   const msg = {
     action: 'push_m3u8' as const,
     m3u8_text: m3u8Text,
@@ -915,11 +946,11 @@ export async function pushHls(
     content_type: descriptor.contentType || 'application/vnd.apple.mpegurl',
     content_disposition: descriptor.contentDisposition || undefined,
     method: descriptor.method || 'GET',
-    headers: buildVeloHeaders(extra),
+    headers: buildVeloHeaders(extra, level),
     options: {
       filename: fileName || undefined,
       output_dir: undefined as string | undefined,
-      merge_format: options?.mergeFormat ?? 'ts',
+      merge_format: options?.mergeFormat ?? _cachedConfig.mergeFormat ?? 'ts',
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
@@ -938,6 +969,7 @@ export async function pushUrl(
   }
   const isM3u8 = isHlsMedia(url, descriptor.contentType)
   const fileName = buildFileName(descriptor)
+  const level = _cachedConfig.headerLevel
   const msg = {
     action: (isM3u8 ? 'push_url' : 'push_normal') as 'push_url' | 'push_normal',
     url,
@@ -946,11 +978,11 @@ export async function pushUrl(
     content_type: descriptor.contentType || undefined,
     content_disposition: descriptor.contentDisposition || undefined,
     method: descriptor.method || 'GET',
-    headers: buildVeloHeaders(extra),
+    headers: buildVeloHeaders(extra, level),
     options: {
       filename: fileName || undefined,
       output_dir: undefined as string | undefined,
-      merge_format: isM3u8 ? (options?.mergeFormat ?? 'ts') : '',
+      merge_format: isM3u8 ? (options?.mergeFormat ?? _cachedConfig.mergeFormat ?? 'ts') : '',
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
@@ -967,6 +999,7 @@ export async function pushNormal(
   }
   const isM3u8 = descriptor.contentType?.includes('mpegurl') || descriptor.ext === '.m3u8'
   const fileName = buildFileName(descriptor)
+  const level = _cachedConfig.headerLevel
   const msg = {
     action: 'push_normal' as const,
     url: descriptor.url,
@@ -975,11 +1008,11 @@ export async function pushNormal(
     content_type: descriptor.contentType || undefined,
     content_disposition: descriptor.contentDisposition || undefined,
     method: descriptor.method || 'GET',
-    headers: buildVeloHeaders(extra),
+    headers: buildVeloHeaders(extra, level),
     options: {
       filename: fileName || undefined,
       output_dir: undefined as string | undefined,
-      merge_format: isM3u8 ? 'ts' : '',
+      merge_format: isM3u8 ? (_cachedConfig.mergeFormat ?? 'ts') : '',
       extra_headers: undefined as Record<string, string> | undefined,
     },
   }
