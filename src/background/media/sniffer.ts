@@ -944,9 +944,26 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
     if (Object.keys(fetchHeaders).length > 0) {
       fetchInit.headers = fetchHeaders
     }
-    const res = await fetch(m3u8Url, fetchInit)
-    if (!res.ok) {
-      logger.warn('[sniffer] fetch m3u8 failed:', res.status)
+    const MAX_FETCH_RETRIES = 3
+    const FETCH_RETRY_BASE_MS = 500
+    let res: Response | null = null
+    for (let attempt = 1; attempt <= MAX_FETCH_RETRIES; attempt++) {
+      try {
+        res = await fetch(m3u8Url, fetchInit)
+        if (res.ok) break
+        logger.warn('[sniffer] fetch m3u8 failed:', res.status, 'attempt:', attempt)
+        res = null
+      } catch (fetchErr) {
+        logger.warn('[sniffer] fetch m3u8 threw:', (fetchErr as Error).message, 'attempt:', attempt)
+        res = null
+      }
+      if (attempt < MAX_FETCH_RETRIES) {
+        const delay = FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1)
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+    if (!res) {
+      logger.error('[sniffer] fetch m3u8 failed after', MAX_FETCH_RETRIES, 'retries, url:', m3u8Url.slice(0, 120))
       return
     }
     const text = await res.text()

@@ -165,29 +165,52 @@ function isM3u8ContentType(contentType: string): boolean {
  */
 async function filterPlaylist(text: string, baseUrl: string): Promise<string | null> {
   try {
-    // content script 在 MAIN world，不能直接用 chrome.runtime.sendMessage
-    // 用 postMessage 给 isolated world 的 bridge content script 转发
-    const reqId = `hls-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    logger.info('[AdClear HLS] filterPlaylist sending to bridge, reqId:', reqId, 'baseUrl:', baseUrl.slice(0, 80))
-    return await new Promise<string | null>((resolve) => {
-      const handler = (e: MessageEvent) => {
-        if (e.source !== window || e.data?.__adclear !== reqId) return
-        window.removeEventListener('message', handler)
-        const filtered = e.data.filtered ?? null
-        logger.info('[AdClear HLS] filterPlaylist got response, filtered:', filtered !== null ? `len=${filtered.length}` : 'null')
-        resolve(filtered)
+    const MAX_BRIDGE_RETRIES = 3
+    const BRIDGE_TIMEOUT_MS = 5000
+    const BRIDGE_RETRY_BASE_MS = 500
+    for (let attempt = 1; attempt <= MAX_BRIDGE_RETRIES; attempt++) {
+      const result = await sendToBridge(text, baseUrl, BRIDGE_TIMEOUT_MS)
+      if (result !== null || attempt === MAX_BRIDGE_RETRIES) {
+        if (attempt > 1 && result !== null) {
+          logger.info('[AdClear HLS] filterPlaylist succeeded on retry:', attempt)
+        }
+        return result
       }
-      window.addEventListener('message', handler)
-      window.postMessage({ __adclear: reqId, type: 'processHlsPlaylist', text, baseUrl, pageUrl: location.href }, '*')
-      // 3s 超时
-      setTimeout(() => {
-        window.removeEventListener('message', handler)
-        logger.warn('[AdClear HLS] filterPlaylist timeout, no bridge response')
-        resolve(null)
-      }, 3000)
-    })
+      logger.warn('[AdClear HLS] filterPlaylist bridge returned null, retrying:', attempt)
+      if (attempt < MAX_BRIDGE_RETRIES) {
+        await new Promise((r) => setTimeout(r, BRIDGE_RETRY_BASE_MS * attempt))
+      }
+    }
+    return null
   } catch (e) {
     logger.warn('[AdClear HLS] filterPlaylist error:', (e as Error).message)
     return null
   }
+}
+
+async function sendToBridge(text: string, baseUrl: string, timeoutMs: number): Promise<string | null> {
+  const reqId = `hls-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  logger.info('[AdClear HLS] filterPlaylist sending to bridge, reqId:', reqId, 'baseUrl:', baseUrl.slice(0, 80))
+  return await new Promise<string | null>((resolve) => {
+    const handler = (e: MessageEvent) => {
+      if (e.source !== window || e.data?.__adclear !== reqId) return
+      window.removeEventListener('message', handler)
+      const filtered = e.data.filtered ?? null
+      const error = e.data.error as string | undefined
+      if (error) {
+        logger.warn('[AdClear HLS] filterPlaylist bridge error:', error)
+        resolve(null)
+        return
+      }
+      logger.info('[AdClear HLS] filterPlaylist got response, filtered:', filtered !== null ? `len=${filtered.length}` : 'null')
+      resolve(filtered)
+    }
+    window.addEventListener('message', handler)
+    window.postMessage({ __adclear: reqId, type: 'processHlsPlaylist', text, baseUrl, pageUrl: location.href }, '*')
+    setTimeout(() => {
+      window.removeEventListener('message', handler)
+      logger.warn('[AdClear HLS] filterPlaylist timeout, no bridge response')
+      resolve(null)
+    }, timeoutMs)
+  })
 }

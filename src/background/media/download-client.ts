@@ -214,25 +214,43 @@ export async function sendToAria2(
 
   params.push(opts)
 
-  const res = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'aria2.addUri',
-      params,
-    }),
+  const rpcBody = JSON.stringify({
+    jsonrpc: '2.0',
+    id: Date.now(),
+    method: 'aria2.addUri',
+    params,
   })
-  if (!res.ok) {
-    return { success: false, message: `aria2 RPC HTTP ${res.status}` }
+  const MAX_RPC_RETRIES = 2
+  const RPC_RETRY_BASE_MS = 500
+  for (let attempt = 1; attempt <= MAX_RPC_RETRIES; attempt++) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: rpcBody,
+      })
+      if (!res.ok) {
+        if (attempt < MAX_RPC_RETRIES) {
+          await new Promise((r) => setTimeout(r, RPC_RETRY_BASE_MS * attempt))
+          continue
+        }
+        return { success: false, message: `aria2 RPC HTTP ${res.status}` }
+      }
+      const json = (await res.json()) as { error?: { message: string }; result?: string }
+      if (json.error) {
+        return { success: false, message: json.error.message }
+      }
+      logger.info('[download] aria2.addUri →', json.result ?? '(no gid)')
+      return { success: true }
+    } catch (e) {
+      if (attempt < MAX_RPC_RETRIES) {
+        await new Promise((r) => setTimeout(r, RPC_RETRY_BASE_MS * attempt))
+        continue
+      }
+      return { success: false, message: (e as Error).message }
+    }
   }
-  const json = (await res.json()) as { error?: { message: string }; result?: string }
-  if (json.error) {
-    return { success: false, message: json.error.message }
-  }
-  logger.info('[download] aria2.addUri →', json.result ?? '(no gid)')
-  return { success: true }
+  return { success: false, message: 'aria2 RPC failed after retries' }
 }
 
 /**
@@ -315,7 +333,7 @@ export async function sendToNdm(
 ): Promise<{ success: boolean; message?: string }> {
   return new Promise((resolve) => {
     try {
-      if (ndmWs && ndmWsReady) {
+      if (ndmWs && ndmWsReady && ndmWs.readyState === WebSocket.OPEN) {
         ndmSendPayload(ndmWs, url, fileName, extra, cfg.headerLevel)
         resolve({ success: true })
         return
@@ -508,7 +526,7 @@ export async function sendToVelo(
   const wsUrl = cfg.veloUrl
   return new Promise((resolve) => {
     try {
-      if (veloWs && veloWsReady) {
+      if (veloWs && veloWsReady && veloWs.readyState === WebSocket.OPEN) {
         veloWsSendUrl(veloWs, url, fileName, cfg.veloToken, finalExtra, cfg.headerLevel)
         resolve({ success: true })
         return
@@ -561,7 +579,7 @@ export async function sendToVeloM3u8(
   const wsUrl = cfg.veloUrl
   return new Promise((resolve) => {
     try {
-      if (veloWs && veloWsReady) {
+      if (veloWs && veloWsReady && veloWs.readyState === WebSocket.OPEN) {
         veloWsSendM3u8(veloWs, m3u8Text, baseUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
         resolve({ success: true })
         return
@@ -832,7 +850,7 @@ export async function sendToVeloDash(
   const wsUrl = cfg.veloUrl
   return new Promise((resolve) => {
     try {
-      if (veloWs && veloWsReady) {
+      if (veloWs && veloWsReady && veloWs.readyState === WebSocket.OPEN) {
         veloWsSendDash(veloWs, videoUrl, audioUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
         resolve({ success: true })
         return

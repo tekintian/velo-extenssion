@@ -120,33 +120,47 @@ export function clearUrlCache(): void {
 export async function computeFingerprint(url: string, authHeaders?: Record<string, string>): Promise<string | null> {
   if (urlCache.has(url)) return urlCache.get(url) ?? null
 
-  try {
-    const headers: Record<string, string> = { Range: `bytes=0-${PREFIX_BYTES - 1}` }
-    if (authHeaders) {
-      for (const [name, value] of Object.entries(authHeaders)) {
-        headers[name] = value
+  const MAX_RETRIES = 2
+  const RETRY_BASE_MS = 300
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const headers: Record<string, string> = { Range: `bytes=0-${PREFIX_BYTES - 1}` }
+      if (authHeaders) {
+        for (const [name, value] of Object.entries(authHeaders)) {
+          headers[name] = value
+        }
       }
-    }
-    const res = await fetch(url, {
-      headers,
-      cache: 'no-store',
-    })
-    if (!res.ok) {
+      const res = await fetch(url, {
+        headers,
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        if (attempt < MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt))
+          continue
+        }
+        setUrlCache(url, null)
+        return null
+      }
+      const buf = await res.arrayBuffer()
+      const bytes = new Uint8Array(buf).slice(0, PREFIX_BYTES)
+      const hashBuf = await crypto.subtle.digest('SHA-256', bytes)
+      const hashHex = Array.from(new Uint8Array(hashBuf))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+      setUrlCache(url, hashHex)
+      return hashHex
+    } catch {
+      if (attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt))
+        continue
+      }
       setUrlCache(url, null)
       return null
     }
-    const buf = await res.arrayBuffer()
-    const bytes = new Uint8Array(buf).slice(0, PREFIX_BYTES)
-    const hashBuf = await crypto.subtle.digest('SHA-256', bytes)
-    const hashHex = Array.from(new Uint8Array(hashBuf))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-    setUrlCache(url, hashHex)
-    return hashHex
-  } catch {
-    setUrlCache(url, null)
-    return null
   }
+  setUrlCache(url, null)
+  return null
 }
 
 /** 查询指纹是否为已知广告 */

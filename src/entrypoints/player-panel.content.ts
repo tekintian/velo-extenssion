@@ -1114,13 +1114,7 @@ export default defineContentScript({
         '2- 或按住 Delete 键并点击下载链接（绕过扩展，用浏览器原生下载）',
         '3- 或临时禁用 velo 扩展（右键扩展图标 → 禁用）',
       ]
-      // content script 可用宿主页面 window.alert
-      try {
-        window.alert(`${title}\n\n${steps.join('\n')}`)
-      } catch {
-        // alert 被宿主页面禁用 → 回退到 toast
-        showToast(title + '\n' + steps.join('\n'), 'error')
-      }
+      showToast(title + ' ' + steps.join('；'), 'warn')
     }
 
     function formatSize(bytes: number): string {

@@ -84,14 +84,36 @@ export default defineContentScript({
       const reqId = data.__adclear
       logger.info('[AdClear HLS bridge] received processHlsPlaylist from MAIN, reqId:', reqId)
       try {
-        const response = await sendMessage({
-          type: 'processHlsPlaylist',
-          payload: {
-            text: data.text ?? '',
-            baseUrl: data.baseUrl ?? '',
-            pageUrl: data.pageUrl ?? '',
-          },
-        })
+        const MAX_SEND_RETRIES = 3
+        const SEND_RETRY_BASE_MS = 300
+        let response: unknown
+        let lastErr: Error | null = null
+        for (let attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
+          try {
+            response = await sendMessage({
+              type: 'processHlsPlaylist',
+              payload: {
+                text: data.text ?? '',
+                baseUrl: data.baseUrl ?? '',
+                pageUrl: data.pageUrl ?? '',
+              },
+            })
+            if (response !== undefined) break
+            logger.warn('[AdClear HLS bridge] sendMessage returned undefined, attempt:', attempt)
+          } catch (sendErr) {
+            lastErr = sendErr as Error
+            logger.warn('[AdClear HLS bridge] sendMessage threw:', lastErr.message, 'attempt:', attempt)
+          }
+          if (attempt < MAX_SEND_RETRIES) {
+            await new Promise((r) => setTimeout(r, SEND_RETRY_BASE_MS * attempt))
+          }
+        }
+        if (response === undefined) {
+          const errMsg = lastErr ? lastErr.message : 'background unavailable after retries'
+          logger.warn('[AdClear HLS bridge] error:', errMsg)
+          window.postMessage({ __adclear: reqId, filtered: null, error: errMsg }, '*')
+          return
+        }
         logger.info('[AdClear HLS bridge] background response mode:', (response as { mode?: string })?.mode)
         const filtered = extractFilteredM3u8(response)
         logger.info('[AdClear HLS bridge] extracted filtered:', filtered !== null ? `len=${filtered.length}` : 'null')

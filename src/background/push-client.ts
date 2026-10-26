@@ -98,6 +98,7 @@ function notifyConnectionFailureWith3StepGuide(): void {
 export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: number, token: string) {
   let ws: WebSocket | null = null
   let connected = false
+  let everConnected = false
   let reconnectIndex = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   const queue: PushQueueItem[] = []
@@ -177,14 +178,16 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
 
   function connectWs(): void {
     const url = `ws://127.0.0.1:${port}/ws`
-    logger.info('Connecting to', url)
+    logger.debug('Connecting to', url)
 
     try {
       ws = new WebSocket(url, [SUB_PROTOCOL])
     } catch (e) {
-      logger.error('WebSocket creation failed:', (e as Error).message)
-      setBadgeError()
-      notifyDisconnected()
+      logger.warn('WebSocket creation failed:', (e as Error).message)
+      if (everConnected) {
+        setBadgeError()
+        notifyDisconnected()
+      }
       scheduleReconnect()
       return
     }
@@ -192,6 +195,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     ws.onopen = () => {
       logger.info('WebSocket connected')
       connected = true
+      everConnected = true
       reconnectIndex = 0
       clearBadge()
       clearDisconnectNotification()
@@ -242,15 +246,16 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       ws = null
       stopHeartbeat()
       rejectAllPending('WebSocket closed')
-      setBadgeError()
-      notifyDisconnected()
+      if (everConnected) {
+        setBadgeError()
+        notifyDisconnected()
+      }
       scheduleReconnect()
     }
 
     ws.onerror = (event) => {
-      logger.error('WebSocket error:', event.type)
+      logger.debug('WebSocket error:', event.type)
       connected = false
-      // onclose 会随后触发并清理状态，这里不重复通知
     }
   }
 
@@ -292,6 +297,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
             logger.info('HTTP health check OK, connected')
           }
           connected = true
+          everConnected = true
           reconnectIndex = 0
           clearBadge()
           clearDisconnectNotification()
@@ -310,16 +316,18 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
 
   function markDisconnected(reason: string): void {
     if (connected) {
-      logger.info('HTTP health check failed:', reason, '— marking disconnected')
+      logger.info('Health check failed:', reason, '— marking disconnected')
+    } else {
+      logger.debug('Health check failed:', reason)
     }
     connected = false
-    setBadgeError()
-    notifyDisconnected()
-    // task #15: 仅在「连接成功→失败」首次切换时弹 3 步排查 alert
-    // 避免重连风暴刷屏（与 disconnectNotified 配合）
-    if (!connectionFailureAlerted) {
-      connectionFailureAlerted = true
-      notifyConnectionFailureWith3StepGuide()
+    if (everConnected) {
+      setBadgeError()
+      notifyDisconnected()
+      if (!connectionFailureAlerted) {
+        connectionFailureAlerted = true
+        notifyConnectionFailureWith3StepGuide()
+      }
     }
   }
 
@@ -353,6 +361,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
         // 推送成功 → 标记 connected（健康检查可能滞后）
         if (!connected) {
           connected = true
+          everConnected = true
           reconnectIndex = 0
           clearBadge()
           clearDisconnectNotification()
@@ -394,6 +403,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
   function connectDeepLink(): void {
     logger.info('DeepLink push channel started (velo:// scheme)')
     connected = true
+    everConnected = true
     clearBadge()
     clearDisconnectNotification()
     void flushQueue()
@@ -467,7 +477,11 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     if (reconnectTimer) return
     const delay = RECONNECT_DELAYS[reconnectIndex] ?? RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]!
     reconnectIndex = Math.min(reconnectIndex + 1, RECONNECT_DELAYS.length - 1)
-    logger.info(`Reconnecting in ${delay}ms (attempt ${reconnectIndex})`)
+    if (everConnected) {
+      logger.info(`Reconnecting in ${delay}ms (attempt ${reconnectIndex})`)
+    } else {
+      logger.debug(`Reconnecting in ${delay}ms (attempt ${reconnectIndex})`)
+    }
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       connect()

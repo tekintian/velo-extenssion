@@ -273,9 +273,16 @@ async function initBackground(): Promise<void> {
   const pairing = new PairingManager()
   const pairingInfo = await pairing.getPairing()
   if (pairingInfo) {
-    pushClient = createPushClient(config.pushChannel, pairingInfo.port, pairingInfo.token)
-    pushClient.connect()
-    setPushClient(pushClient)
+    const probeResult = await pairing.probeClient([pairingInfo.port])
+    if (probeResult.available) {
+      pushClient = createPushClient(config.pushChannel, probeResult.port, pairingInfo.token)
+      pushClient.connect()
+      setPushClient(pushClient)
+    } else {
+      logger.info('Paired client on port', pairingInfo.port, 'is not reachable — clearing stale pairing')
+      await pairing.clearPairing()
+      void tryAutoConnect()
+    }
   } else {
     void tryAutoConnect()
   }
@@ -283,10 +290,12 @@ async function initBackground(): Promise<void> {
   startSniffer()
   setM3u8ProcessHandler(veloProcessM3u8)
 
-  chrome.contextMenus.create({
-    id: 'velo-download-link',
-    title: '使用 velo 下载',
-    contexts: ['link', 'image', 'video', 'audio'],
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'velo-download-link',
+      title: '使用 velo 下载',
+      contexts: ['link', 'image', 'video', 'audio'],
+    })
   })
 
   chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -386,9 +395,26 @@ async function veloProcessM3u8(
     if (Object.keys(fetchHeaders).length > 0) {
       fetchInit.headers = fetchHeaders
     }
-    const resp = await fetch(m3u8Url, fetchInit)
-    if (!resp.ok) {
-      logger.warn('[velo] fetch m3u8 failed:', resp.status)
+    const MAX_FETCH_RETRIES = 3
+    const FETCH_RETRY_BASE_MS = 500
+    let resp: Response | null = null
+    for (let attempt = 1; attempt <= MAX_FETCH_RETRIES; attempt++) {
+      try {
+        resp = await fetch(m3u8Url, fetchInit)
+        if (resp.ok) break
+        logger.warn('[velo] fetch m3u8 failed:', resp.status, 'attempt:', attempt)
+        resp = null
+      } catch (fetchErr) {
+        logger.warn('[velo] fetch m3u8 threw:', (fetchErr as Error).message, 'attempt:', attempt)
+        resp = null
+      }
+      if (attempt < MAX_FETCH_RETRIES) {
+        const delay = FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1)
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+    if (!resp) {
+      logger.error('[velo] fetch m3u8 failed after', MAX_FETCH_RETRIES, 'retries, url:', m3u8Url.slice(0, 120))
       return
     }
     const text = await resp.text()

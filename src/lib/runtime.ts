@@ -10,22 +10,22 @@
  * 都会抛出 "Extension context invalidated"。可选链 `?.` 无法阻止此异常，
  * 因为 `chrome.runtime` 既非 null 也非 undefined，而是 Proxy getter 抛异常。
  * 因此必须用 try/catch 包裹所有 `chrome.runtime` 访问。
+ *
+ * ## 修复：不再缓存失效状态
+ * 旧实现"一旦失效永不恢复"，导致扩展热重载后旧 content script 的上下文失效，
+ * contextInvalidated 被永久锁为 true，后续所有 sendMessage 全部静默返回 undefined，
+ * HLS 过滤永久失效（直到页面刷新）。
+ *
+ * 修复：每次检查都重新探测 chrome.runtime.id，不再缓存失效状态。
+ * 性能影响：Proxy getter 开销极小（< 1μs），而 HLS 处理频率远低于此。
+ * 如果上下文确实已失效，反复探测也只是多触发几次 Proxy getter，不会产生副作用。
  */
-
-/** 缓存上下文失效状态：一旦失效永不恢复，避免反复触发 Proxy getter */
-let contextInvalidated = false
 
 /** 检查扩展上下文是否仍然有效 */
 export function isContextValid(): boolean {
-  if (contextInvalidated) return false
   try {
-    if (chrome.runtime?.id === undefined) {
-      contextInvalidated = true
-      return false
-    }
-    return true
+    return chrome.runtime?.id !== undefined
   } catch {
-    contextInvalidated = true
     return false
   }
 }
@@ -41,7 +41,6 @@ export function sendMessage<T = unknown>(message: unknown): Promise<T | undefine
   try {
     return chrome.runtime.sendMessage(message).catch(() => undefined) as Promise<T | undefined>
   } catch {
-    contextInvalidated = true
     return Promise.resolve(undefined)
   }
 }
@@ -60,7 +59,7 @@ export function sendMessageFireAndForget(message: unknown): void {
       p.catch(() => {})
     }
   } catch {
-    contextInvalidated = true
+    // context invalidated — ignore
   }
 }
 
@@ -78,7 +77,6 @@ export function onMessageAddListener(
     chrome.runtime.onMessage.addListener(callback)
     return true
   } catch {
-    contextInvalidated = true
     return false
   }
 }

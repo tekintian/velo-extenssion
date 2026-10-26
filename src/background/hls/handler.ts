@@ -359,12 +359,30 @@ export function registerHlsHandlers(): void {
     const { url, host } = message.payload
     logger.info('[hls] testM3u8 called, url:', url.slice(0, 80))
 
-    // 1. fetch m3u8 内容
-    let text: string
+    // 1. fetch m3u8 内容（带重试）
+    let text = ''
     try {
-      const resp = await fetch(url, { cache: 'no-store' })
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      text = await resp.text()
+      const MAX_RETRIES = 3
+      const RETRY_BASE_MS = 500
+      let lastErr: Error | null = null
+      let fetchOk = false
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const resp = await fetch(url, { cache: 'no-store' })
+          if (resp.ok) {
+            text = await resp.text()
+            fetchOk = true
+            break
+          }
+          lastErr = new Error(`HTTP ${resp.status}`)
+        } catch (e) {
+          lastErr = e as Error
+        }
+        if (attempt < MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, RETRY_BASE_MS * Math.pow(2, attempt - 1)))
+        }
+      }
+      if (!fetchOk) throw lastErr ?? new Error('fetch failed')
     } catch (e) {
       logger.error('[hls] testM3u8 fetch failed:', (e as Error).message)
       return { error: (e as Error).message }
@@ -536,7 +554,7 @@ export function registerHlsHandlers(): void {
           if (requestHeaders?.['Cookie']) fetchHeaders['Cookie'] = requestHeaders['Cookie']
           if (requestHeaders?.['Origin']) fetchHeaders['Origin'] = requestHeaders['Origin']
           if (requestHeaders?.['Referer']) fetchHeaders['Referer'] = requestHeaders['Referer']
-          const resp = await fetch(fetchUrl, fetchHeaders ? { headers: fetchHeaders } : undefined)
+          const resp = await fetch(fetchUrl, fetchHeaders ? { headers: fetchHeaders, cache: 'no-store' } : { cache: 'no-store' })
           if (resp.ok) {
             const html = await resp.text()
             const ogMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i)
