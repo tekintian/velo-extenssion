@@ -530,6 +530,12 @@
   "options_nav_hls_filter_desc": {
     "message": "广告过滤开关、评分阈值、指纹库、自定义规则"
   },
+  "options_nav_dash_filter": {
+    "message": "DASH 广告过滤"
+  },
+  "options_nav_dash_filter_desc": {
+    "message": "DASH/MPD manifest 广告过滤开关、检测参数、指纹库、远程规则"
+  },
   "options_save_hls_filter_config": {
     "message": "保存广告过滤配置"
   },

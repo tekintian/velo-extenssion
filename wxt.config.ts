@@ -60,11 +60,11 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        '@': './src',
-        '@engine': './src/engine',
-        '@background': './src/background',
-        '@lib': './src/lib',
-        '@types': './src/types',
+        '@': resolve(__dirname, 'src'),
+        '@engine': resolve(__dirname, 'src/engine'),
+        '@background': resolve(__dirname, 'src/background'),
+        '@lib': resolve(__dirname, 'src/lib'),
+        '@types': resolve(__dirname, 'src/types'),
       },
     },
     build: {

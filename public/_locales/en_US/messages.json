@@ -530,6 +530,12 @@
   "options_nav_hls_filter_desc": {
     "message": "Ad filter switch, score threshold, fingerprint library, custom rules"
   },
+  "options_nav_dash_filter": {
+    "message": "DASH Ad Filter"
+  },
+  "options_nav_dash_filter_desc": {
+    "message": "DASH/MPD manifest ad filter switch, detection params, fingerprint library, remote rules"
+  },
   "options_save_hls_filter_config": {
     "message": "Save Ad Filter Config"
   },

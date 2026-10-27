@@ -76,12 +76,24 @@ export default defineContentScript({
       }
     }
 
+    function isMediaMime(mimeType: string): boolean {
+      const lower = mimeType.toLowerCase()
+      return (
+        lower.includes('mpegurl') ||
+        lower.startsWith('video/') ||
+        lower.startsWith('audio/') ||
+        lower.includes('mp4') ||
+        lower.includes('webm') ||
+        lower.includes('matroska')
+      )
+    }
+
     function hookMediaSource(ms: MediaSource): void {
       const origAddSourceBuffer = ms.addSourceBuffer.bind(ms)
       ms.addSourceBuffer = function (mimeType: string) {
         const sb = origAddSourceBuffer(mimeType)
 
-        if (mimeType.includes('mpegurl') || mimeType.includes('mpegURL')) {
+        if (isMediaMime(mimeType)) {
           window.postMessage({
             source: 'velo-mse',
             type: 'mse-source-added',
@@ -111,6 +123,7 @@ export default defineContentScript({
                   hash,
                   size: byteLength,
                   url: location.href,
+                  protocol: mimeType.toLowerCase().startsWith('video/mp4') || mimeType.toLowerCase().startsWith('audio/mp4') || mimeType.toLowerCase().includes('webm') ? 'dash' : 'hls',
                 },
               }, '*')
             })

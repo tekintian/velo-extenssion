@@ -941,28 +941,28 @@ Phase 4: 灰度发布（Week 4）
 
 ### 5.1 功能验收
 
-- [ ] **Phase 1**：JSON Playurl 端到端流程正常（B站 playurl + YouTube player API）
-- [ ] **Phase 1**：content script 拦截 playurl + mpd + manifest URL
-- [ ] **Phase 1**：ad-detector JSON 场景信号正确识别广告轨（阈值=3）
-- [ ] **Phase 1**：指纹二次过滤命中已知广告轨
-- [ ] **Phase 1**：空 manifest 保护生效（全广告 → passthrough）
-- [ ] **Phase 1**：DRM 检测 + auto-disabled
-- [ ] **Phase 1**：`enableDashAdFilter` 开关正常
-- [ ] **Phase 2**：MPD XML 端到端流程正常
-- [ ] **Phase 2**：Period@start 时间连续性修复
-- [ ] **Phase 2**：动态 MPD auto-passthrough
-- [ ] **Phase 3**：自动学习闭环（shared/suggest）
-- [ ] **Phase 3**：player-panel DASH 广告区间显示 + 跳过
-- [ ] **Phase 0**：storage key 通用化迁移 + HLS 回归测试全绿
+- [x] **Phase 1**：JSON Playurl 端到端流程正常（B站 playurl + YouTube player API）
+- [x] **Phase 1**：content script 拦截 playurl + mpd + manifest URL
+- [x] **Phase 1**：ad-detector JSON 场景信号正确识别广告轨（阈值=3）
+- [x] **Phase 1**：指纹二次过滤命中已知广告轨
+- [x] **Phase 1**：空 manifest 保护生效（全广告 → passthrough）
+- [x] **Phase 1**：DRM 检测 + auto-disabled
+- [x] **Phase 1**：`enableDashAdFilter` 开关正常
+- [x] **Phase 2**：MPD XML 端到端流程正常
+- [x] **Phase 2**：Period@start 时间连续性修复
+- [x] **Phase 2**：动态 MPD auto-passthrough
+- [x] **Phase 3**：自动学习闭环（shared/suggest）
+- [x] **Phase 3**：player-panel DASH 广告区间显示 + 跳过
+- [x] **Phase 0**：storage key 通用化迁移 + HLS 回归测试全绿
 
 ### 5.2 质量验收
 
-- [ ] `bun run typecheck` 零错误
-- [ ] `bun run lint` 零错误（max-warnings=10 内）
-- [ ] `bun run test` 全部通过
-- [ ] 测试覆盖率 >80%
-- [ ] 无 `console.log` 残留（使用 `lib/logger.ts`）
-- [ ] 代码审查通过
+- [x] `bun run typecheck` 零错误
+- [x] `bun run lint` 零错误（max-warnings=10 内）
+- [x] `bun run test` 全部通过
+- [x] 测试覆盖率 >80%
+- [x] 无 `console.log` 残留（使用 `lib/logger.ts`）
+- [x] 代码审查通过
 
 ### 5.3 性能验收
 

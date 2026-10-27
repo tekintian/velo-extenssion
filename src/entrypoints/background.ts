@@ -10,7 +10,9 @@ import type { DownloadClientConfig } from '@/background/media/types'
 import { registerMediaHandlers } from '@/background/media/handler'
 import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
 import { registerHlsHandlers } from '@/background/hls/handler'
+import { registerDashHandlers } from '@/background/dash/handler'
 import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
+import { migrateAdFilterKeys } from '@engine/shared/storage'
 import { recordStats } from '@/engine/hls/stats'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type VeloConfig } from '@/types'
 import { configStore, persistentStorage } from '@/lib/storage'
@@ -48,6 +50,7 @@ let config: VeloConfig = { ...DEFAULT_SDOWN_CONFIG }
 
 function registerHandlers(): void {
   registerHlsHandlers()
+  registerDashHandlers()
   // P0-3: 注册媒体嗅探/下载相关 handler（getCurrentTabId/getMediaItems/sendToDownload 等 8 个）
   // 此前遗漏调用，导致 player-panel.content.ts 轮询全失败、所有下载按钮报错
   registerMediaHandlers()
@@ -252,6 +255,8 @@ function registerHandlers(): void {
 
 async function initBackground(): Promise<void> {
   logger.info('Background async init starting')
+
+  await migrateAdFilterKeys()
 
   const stored = await configStore.get<VeloConfig>()
   config = { ...DEFAULT_SDOWN_CONFIG, ...stored }

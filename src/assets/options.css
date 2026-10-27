@@ -1043,3 +1043,219 @@ body {
   padding-top: 12px;
   border-top: 1px solid #eee;
 }
+
+/* ===== DASH Tab Navigation ===== */
+.dash-tab-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: #fff;
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.dash-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #666;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex: 1;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.dash-tab-btn:hover {
+  background: #f0f7ff;
+  color: var(--color-primary);
+}
+
+.dash-tab-active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.dash-tab-active:hover {
+  background: #357abd;
+  color: #fff;
+}
+
+.dash-tab-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.dash-tab-label {
+  line-height: 1;
+}
+
+/* ===== DASH Fingerprint List ===== */
+.fp-list {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.fp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.fp-item:last-child {
+  border-bottom: none;
+}
+
+.fp-hash {
+  font-family: 'SF Mono', Monaco, monospace;
+  color: #666;
+  min-width: 80px;
+}
+
+.fp-name {
+  color: #333;
+  font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-source {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #f0f7ff;
+  color: #1890ff;
+  white-space: nowrap;
+}
+
+.fp-time {
+  color: #999;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fp-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #999;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.fp-remove:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+/* ===== DASH Site List ===== */
+.site-list h3 {
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+  margin-bottom: 8px;
+  margin-top: 12px;
+}
+
+.site-list h3:first-child {
+  margin-top: 0;
+}
+
+.site-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.site-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.site-tag-builtin {
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  color: #1890ff;
+}
+
+.site-tag-user {
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  color: #389e0d;
+}
+
+.site-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.06);
+  color: #666;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  margin-left: 2px;
+}
+
+.site-tag-remove:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.site-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.site-add-row input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.site-add-row input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.15);
+}

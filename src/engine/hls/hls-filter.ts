@@ -76,7 +76,7 @@ export async function buildConfig(
 
   // 站点规则可覆盖阈值与模式
   const scoreThreshold = rule?.scoreThreshold ?? base.scoreThreshold
-  const mode = rule?.mode ?? base.mode
+  const mode = (rule?.mode as import('./types').AdDeliveryMode | undefined) ?? base.mode
 
   return {
     ...base,

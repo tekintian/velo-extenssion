@@ -107,6 +107,7 @@ export interface AdRange {
 
 export interface Settings {
   enableHlsAdFilter: boolean
+  enableDashAdFilter: boolean
   enableLogging: boolean
   enableAdSkip: boolean
   showPageBadge: boolean
@@ -117,6 +118,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   enableHlsAdFilter: true,
+  enableDashAdFilter: true,
   enableLogging: false,
   enableAdSkip: true,
   showPageBadge: true,

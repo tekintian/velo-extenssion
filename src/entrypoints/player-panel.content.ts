@@ -1123,7 +1123,7 @@ export default defineContentScript({
         '2- 或按住 Delete 键并点击下载链接（绕过扩展，用浏览器原生下载）',
         '3- 或临时禁用 velo 扩展（右键扩展图标 → 禁用）',
       ]
-      showToast(title + ' ' + steps.join('；'), 'warn')
+      showToast(title + ' ' + steps.join('；'), 'error')
     }
 
     function formatSize(bytes: number): string {

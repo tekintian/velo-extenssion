@@ -990,7 +990,7 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
         autoLearnFingerprints: (fpCfg.autoLearnFingerprints as boolean) ?? true,
         remoteFingerprintsUrl: (fpCfg.remoteFingerprintsUrl as string) ?? '',
         scoreThreshold: (fpCfg.scoreThreshold as number) ?? 3,
-        mode: ((fpCfg.mode as string) ?? 'm3u8-file') as 'data-url' | 'passthrough' | 'm3u8-file' | 'disabled',
+        mode: ((fpCfg.mode as string) ?? 'm3u8-file') as import('@/engine/hls/types').AdDeliveryMode,
         urlPatterns: (fpCfg.urlPatterns as string[]) ?? [],
         keepDiscontinuityOnGap: (fpCfg.keepDiscontinuityOnGap as boolean) ?? true,
       },

@@ -26,6 +26,13 @@ const PAGES = [
     color: '#722ed1',
   },
   {
+    id: 'dash-filter',
+    icon: '🎬',
+    titleKey: 'options_nav_dash_filter',
+    descKey: 'options_nav_dash_filter_desc',
+    color: '#1890ff',
+  },
+  {
     id: 'hls-test',
     icon: '🧪',
     titleKey: 'options_nav_test',

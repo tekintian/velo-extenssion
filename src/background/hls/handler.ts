@@ -327,7 +327,7 @@ export function registerHlsHandlers(): void {
       keepDiscontinuityOnGap: (cfg.keepDiscontinuityOnGap as boolean) ?? true,
       logToConsole: (cfg.logToConsole as boolean) ?? false,
       scoreThreshold: (cfg.scoreThreshold as number) ?? 3,
-      mode: (cfg.mode as string) ?? 'm3u8-file',
+      mode: (cfg.mode as import('@/engine/hls/types').AdDeliveryMode) ?? 'm3u8-file',
       urlPatterns: (cfg.urlPatterns as string[]) ?? [],
       remoteRulesUrl: (cfg.remoteRulesUrl as string) ?? '',
     }
