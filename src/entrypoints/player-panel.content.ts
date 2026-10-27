@@ -155,13 +155,12 @@ export default defineContentScript({
     function findPlayerElement(url?: string, fallbackUrl?: string): HTMLElement | null {
       const tags = ['VIDEO', 'AUDIO', 'OBJECT', 'EMBED'] as const
       try {
-        const active = document.activeElement
         let activeMatch: HTMLElement | null = null
+        const active = document.activeElement
         if (active && tags.includes(active.tagName as typeof tags[number])) {
           activeMatch = active as HTMLElement
         }
 
-        // 鼠标坐标下的元素（task #1 elementFromPoint）
         let mouseMatch: HTMLElement | null = null
         if (lastMouseX > 0 || lastMouseY > 0) {
           const ep = document.elementFromPoint(lastMouseX, lastMouseY)
@@ -170,25 +169,21 @@ export default defineContentScript({
           }
         }
 
-        // 按面积评分的最大元素（NDM l 变量）
         let bestByArea: HTMLElement | null = null
         let bestArea = 0
-        // 第一个有效元素（NDM n 变量）
+        let bestAspectOk: HTMLElement | null = null
         let firstValid: HTMLElement | null = null
-        // 精确 src 匹配（NDM F 变量）
         let exactMatch: HTMLElement | null = null
 
         for (let v = 0; v < tags.length; v++) {
           const elements = document.getElementsByTagName(tags[v]!)
           for (let z = 0; z < elements.length; z++) {
             const g = elements[z] as HTMLElement
-            // EMBED 仅处理 application/x-shockwave-flash 类型（NDM: type === shockwave-flash）
             if (v === 3 && g.tagName === 'EMBED') {
               const type = (g as HTMLEmbedElement).type?.toLowerCase() ?? ''
               if (type !== 'application/x-shockwave-flash') continue
             }
 
-            // 精确 src 匹配优先
             const src = (g as HTMLMediaElement & { data?: string }).src
               || (g as HTMLObjectElement).data
               || ''
@@ -197,45 +192,51 @@ export default defineContentScript({
               break
             }
 
-            // 评分（仅 video/audio/object 的大尺寸元素）
-            if (!activeMatch && !mouseMatch) {
-              const w = g.clientWidth
-              const h = g.clientHeight
-              if (w > 0 && h > 0) {
-                const cs = window.getComputedStyle(g)
-                if (cs && cs.visibility !== 'hidden') {
-                  const area = w * h
-                  if (h < 1.4 * w && w < 3 * h && area > bestArea) {
-                    bestArea = area
-                    bestByArea = g
-                  }
-                  if (!firstValid) firstValid = g
-                }
+            const w = g.clientWidth
+            const h = g.clientHeight
+            if (w <= 0 || h <= 0) continue
+            const cs = window.getComputedStyle(g)
+            if (!cs || cs.visibility === 'hidden') continue
+
+            if (!firstValid) firstValid = g
+            const area = w * h
+            const aspectOk = h < 1.4 * w && w < 3 * h
+            if (aspectOk) {
+              if (!bestAspectOk || area > (bestAspectOk.clientWidth * bestAspectOk.clientHeight)) {
+                bestAspectOk = g
               }
+            }
+            if (area > bestArea) {
+              bestArea = area
+              bestByArea = g
             }
           }
           if (exactMatch) break
         }
 
-        // 优先级：精确 src 匹配 > active element > 鼠标坐标 > 最大面积 > 第一个有效
         let d: HTMLElement | null =
-          exactMatch ?? activeMatch ?? mouseMatch ?? bestByArea ?? firstValid
+          exactMatch ?? bestAspectOk ?? bestByArea ?? firstValid ?? activeMatch ?? mouseMatch
         if (!d) {
-          // 兜底：querySelectorAll('video,audio')[0]
           const list = document.querySelectorAll<HTMLElement>('video,audio')
           d = list[0] ?? null
         }
-        if (!d) return null
+        if (!d) {
+          logger.info('[player-panel] findPlayerElement: no video/audio/object/embed found in current frame')
+          return null
+        }
 
-        // NDM ha: EMBED 无尺寸时回退到 OBJECT 父元素
         if (d.tagName === 'EMBED' && !d.clientWidth && !d.clientHeight) {
           const parent = d.parentElement
           if (parent && parent.tagName === 'OBJECT') {
             d = parent
           }
         }
+        logger.info('[player-panel] findPlayerElement: resolved', d.tagName,
+          'size=', d.clientWidth + 'x' + d.clientHeight,
+          'src=', (d as HTMLMediaElement).src || (d as HTMLObjectElement).data || 'none')
         return d
-      } catch {
+      } catch (err) {
+        logger.info('[player-panel] findPlayerElement error:', err)
         return null
       }
     }
@@ -381,7 +382,11 @@ export default defineContentScript({
      *   - 若新位置与已有 panel 距离 ≤15px，把已有 panel 的 items 合并进来
      *   - 然后销毁已有 panel
      */
-    function createPanel(video: HTMLElement | null, firstItemId: string): Panel | null {
+    function createPanel(video: HTMLElement, firstItemId: string): Panel | null {
+      if (!video) {
+        logger.info('[player-panel] createPanel: video is null, abort')
+        return null
+      }
       ensureStyles()
       const id = getOrCreateNeatId(video)
       const position = computePanelPosition(video)
@@ -1043,6 +1048,10 @@ export default defineContentScript({
         if (assignedIds.has(item.id)) continue
         // task #1: 元素命中检测
         const video = findPlayerElement(item.url, location.href)
+        if (!video) {
+          logger.info('[player-panel] skip item, no player element found for', item.url.slice(0, 80))
+          continue
+        }
         // 已有 panel 跟踪同一 video → 加入
         let targetPanel: Panel | null = null
         for (const panel of panels.values()) {

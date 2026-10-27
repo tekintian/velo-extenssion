@@ -337,9 +337,20 @@ export default defineContentScript({
           btn.style.cssText = 'position:fixed;left:12px;top:12px;z-index:2147483647;' +
             'background:#059669;color:#fff;font:600 12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;' +
             'padding:8px 14px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;' +
-            'transition:opacity .3s;opacity:0;user-select:none;'
+            'transition:opacity .3s;opacity:0;user-select:none;' +
+            'display:flex;align-items:flex-start;gap:6px;'
+          btn.innerHTML = `
+            <span class="dl-body" style="flex:1;white-space:pre-line"></span>
+            <span class="dl-close" title="${i18n('badge_close')}" style="cursor:pointer;color:rgba(255,255,255,.6);font-size:14px;line-height:1;padding:0 2px;margin:-2px -6px 0 0;flex-shrink:0;">×</span>
+          `
+          btn.querySelector('.dl-close')!.addEventListener('click', (e) => {
+            e.stopPropagation()
+            btn!.style.opacity = '0'
+            setTimeout(() => btn!.remove(), 300)
+          })
           btn.addEventListener('click', async () => {
-            btn!.textContent = '⏬ ' + i18n('badge_downloading')
+            const body = btn!.querySelector('.dl-body') as HTMLElement
+            body.textContent = '⏬ ' + i18n('badge_downloading')
             try {
               const tabResp = (await sendMessage<{ tabId?: number }>({ type: 'getCurrentTabId' }))
               const fileName = resolveBadgeFileName()
@@ -348,27 +359,28 @@ export default defineContentScript({
                 payload: { tabId: tabResp?.tabId ?? 0, fileName: fileName || undefined },
               })
               if (r?.ok) {
-                btn!.textContent = '✓ ' + i18n('badge_downloaded') + ' ' + (r.filename ?? 'cleaned.m3u8')
+                body.textContent = '✓ ' + i18n('badge_downloaded') + ' ' + (r.filename ?? 'cleaned.m3u8')
                 btn!.style.background = '#0f766e'
                 setTimeout(() => {
                   btn!.style.opacity = '0'
+                  setTimeout(() => btn!.remove(), 300)
                 }, 3000)
               } else {
-                btn!.textContent = '✗ ' + (r?.error ?? i18n('badge_download_failed'))
+                body.textContent = '✗ ' + (r?.error ?? i18n('badge_download_failed'))
                 btn!.style.background = '#dc2626'
                 setTimeout(() => {
-                  btn!.textContent = '📥 ' + i18n('badge_download_m3u8')
+                  body.textContent = i18n('badge_download_m3u8')
                   btn!.style.background = '#059669'
                 }, 2500)
               }
             } catch (e) {
-              btn!.textContent = '✗ ' + (e as Error).message
+              body.textContent = '✗ ' + (e as Error).message
             }
           })
           ;(document.body ?? document.documentElement).appendChild(btn)
         }
-        btn.textContent = i18n('badge_download_m3u8') + (adCount > 0 ? ` (${i18n('badge_ad_filtered', String(adCount))})` : '') + '\n📁 ' + displayName + '_cleaned.m3u8'
-        btn.style.whiteSpace = 'pre-line'
+        const body = btn.querySelector('.dl-body') as HTMLElement
+        body.textContent = i18n('badge_download_m3u8') + (adCount > 0 ? ` (${i18n('badge_ad_filtered', String(adCount))})` : '') + '\n📁 ' + displayName + '_cleaned.m3u8'
         btn.style.background = '#059669'
         btn.style.opacity = '1'
       } catch {
