@@ -1,6 +1,7 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 const PAGES = [
@@ -86,14 +87,11 @@ function OptionsIndex() {
   }, [])
 
   async function loadStatus() {
-    try {
-      const resp = await chrome.runtime.sendMessage({ type: 'velo-get-status' })
-      if (resp) setPaired(resp.paired ?? false)
-    } catch { /* ignore */ }
-    try {
-      const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
-      if (full) setHlsEnabled(full.enableAdSkip ?? true)
-    } catch { /* ignore */ }
+    const resp = await request<{ paired?: boolean }>('velo-get-status')
+    if (resp) setPaired(resp.paired ?? false)
+
+    const full = await request<{ enableAdSkip?: boolean }>('getHlsFullConfig')
+    if (full) setHlsEnabled(full.enableAdSkip ?? true)
   }
 
   return (
@@ -139,8 +137,4 @@ function OptionsIndex() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<OptionsIndex />)
+mountReact('root', <OptionsIndex />)

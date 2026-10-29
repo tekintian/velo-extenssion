@@ -184,10 +184,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       ws = new WebSocket(url, [SUB_PROTOCOL])
     } catch (e) {
       logger.warn('WebSocket creation failed:', (e as Error).message)
-      if (everConnected) {
-        setBadgeError()
-        notifyDisconnected()
-      }
+      handleConnectionFailure()
       scheduleReconnect()
       return
     }
@@ -246,10 +243,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       ws = null
       stopHeartbeat()
       rejectAllPending('WebSocket closed')
-      if (everConnected) {
-        setBadgeError()
-        notifyDisconnected()
-      }
+      handleConnectionFailure()
       scheduleReconnect()
     }
 
@@ -321,13 +315,21 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       logger.debug('Health check failed:', reason)
     }
     connected = false
-    if (everConnected) {
-      setBadgeError()
-      notifyDisconnected()
-      if (!connectionFailureAlerted) {
-        connectionFailureAlerted = true
-        notifyConnectionFailureWith3StepGuide()
-      }
+    handleConnectionFailure()
+  }
+
+  /**
+   * 连接失败统一反馈：badge + 桌面通知 + 一次性三步排查 alert
+   *
+   * 不再以 everConnected 作为前置条件：桌面端从未启动时（首次连接即失败）
+   * 用户点下载后同样需要可见反馈，否则表现为「点了没反应」。
+   */
+  function handleConnectionFailure(): void {
+    setBadgeError()
+    notifyDisconnected()
+    if (!connectionFailureAlerted) {
+      connectionFailureAlerted = true
+      notifyConnectionFailureWith3StepGuide()
     }
   }
 

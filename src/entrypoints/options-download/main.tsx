@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 type DlClient = 'ndm' | 'aria2' | 'velo' | 'native'
@@ -28,63 +29,65 @@ function DownloadPage() {
   }, [])
 
   async function loadConfig() {
-    try {
-      const dl = await chrome.runtime.sendMessage({ type: 'getDownloadConfig' }) as {
-        client: string; rpcUrl: string; rpcSecret: string
-        veloUrl: string; veloToken: string
-        headerLevel?: string
-        mergeFormat?: string
-        autoPush?: boolean
-      }
-      if (dl) {
-        setDlClient((dl.client as DlClient) ?? 'velo')
-        setRpcUrl(dl.rpcUrl ?? 'http://127.0.0.1:16816/jsonrpc')
-        setRpcSecret(dl.rpcSecret ?? '')
-        setVeloUrl(dl.veloUrl ?? 'ws://127.0.0.1:16888/ws')
-        setVeloToken(dl.veloToken ?? '')
-        setHeaderLevel((dl.headerLevel as HeaderLevel) ?? 'full')
-        setMergeFormat((dl.mergeFormat as 'ts' | 'mp4' | 'mkv' | 'keep') ?? 'ts')
-        setAutoPush(dl.autoPush ?? false)
-      }
-    } catch { /* ignore */ }
-    try {
-      const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
-      if (full?.mode) setDeliveryMode(full.mode)
-    } catch { /* ignore */ }
+    const dl = await request<{
+      client?: string
+      rpcUrl?: string
+      rpcSecret?: string
+      veloUrl?: string
+      veloToken?: string
+      headerLevel?: string
+      mergeFormat?: string
+      autoPush?: boolean
+    }>('getDownloadConfig')
+    if (dl) {
+      setDlClient((dl.client as DlClient) ?? 'velo')
+      setRpcUrl(dl.rpcUrl ?? 'http://127.0.0.1:16816/jsonrpc')
+      setRpcSecret(dl.rpcSecret ?? '')
+      setVeloUrl(dl.veloUrl ?? 'ws://127.0.0.1:16888/ws')
+      setVeloToken(dl.veloToken ?? '')
+      setHeaderLevel((dl.headerLevel as HeaderLevel) ?? 'full')
+      setMergeFormat((dl.mergeFormat as 'ts' | 'mp4' | 'mkv' | 'keep') ?? 'ts')
+      setAutoPush(dl.autoPush ?? false)
+    }
+
+    const full = await request<{ mode?: string }>('getHlsFullConfig')
+    if (full?.mode) setDeliveryMode(full.mode)
   }
 
   async function handleSave() {
-    try {
-      await chrome.runtime.sendMessage({
-        type: 'setDownloadConfig',
-        payload: { client: dlClient, rpcUrl, rpcSecret, veloUrl, veloToken, headerLevel, mergeFormat, autoPush },
-      })
-      await chrome.runtime.sendMessage({
-        type: 'setHlsFullConfig',
-        payload: { mode: deliveryMode },
-      })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch (e) {
-      alert(i18n('options_save_failed') + ': ' + (e as Error).message)
+    const a = await request('setDownloadConfig', {
+      client: dlClient,
+      rpcUrl,
+      rpcSecret,
+      veloUrl,
+      veloToken,
+      headerLevel,
+      mergeFormat,
+      autoPush,
+    })
+    const b = await request('setHlsFullConfig', { mode: deliveryMode })
+    if (!a || !b) {
+      alert(i18n('options_save_failed'))
+      return
     }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   async function handleTest() {
     if (!testUrl) return
     setTesting(true)
     setTestResult(null)
-    try {
-      const r = await chrome.runtime.sendMessage({
-        type: 'sendToDownload',
-        payload: { url: testUrl, pageUrl: testUrl },
-      }) as { success: boolean; message?: string }
+    const r = await request<{ success?: boolean; message?: string }>('sendToDownload', {
+      url: testUrl,
+      pageUrl: testUrl,
+    })
+    if (!r) {
+      setTestResult(`✗ ${i18n('options_test_failed')}`)
+    } else {
       setTestResult(r.success ? i18n('options_download_sent') : `✗ ${r.message ?? i18n('options_test_failed')}`)
-    } catch (e) {
-      setTestResult(`✗ ${(e as Error).message}`)
-    } finally {
-      setTesting(false)
     }
+    setTesting(false)
   }
 
   const CLIENTS: { id: DlClient; icon: string; nameKey: string; descKey: string; defaultUrl: string }[] = [
@@ -285,8 +288,4 @@ function DownloadPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<DownloadPage />)
+mountReact('root', <DownloadPage />)

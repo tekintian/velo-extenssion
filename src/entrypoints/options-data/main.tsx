@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 type DataCategory = 'userRules' | 'suggestions' | 'fullConfig' | 'learnedFingerprints' | 'adSamples'
@@ -22,19 +23,20 @@ function DataPage() {
   }
 
   const handleExport = async () => {
-    try {
-      const backup = await chrome.runtime.sendMessage({
-        type: 'exportHlsBackup',
-        payload: { categories: Array.from(exportCategories) },
-      })
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `velo-hls-backup-${new Date().toISOString().slice(0, 10)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) { alert(String(e)) }
+    const backup = await request<Record<string, unknown>>('exportHlsBackup', {
+      categories: Array.from(exportCategories),
+    })
+    if (!backup) {
+      alert(i18n('options_export_failed'))
+      return
+    }
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `velo-hls-backup-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const handleImport = () => {
@@ -47,10 +49,11 @@ function DataPage() {
       try {
         const text = await file.text()
         const data = JSON.parse(text)
-        await chrome.runtime.sendMessage({
-          type: 'importHlsBackup',
-          payload: { data, strategy: importStrategy },
-        })
+        const r = await request('importHlsBackup', { data, strategy: importStrategy })
+        if (!r) {
+          alert(i18n('options_import_failed'))
+          return
+        }
         alert(i18n('options_import_success'))
       } catch (err) { alert(i18n('options_import_failed') + ': ' + (err as Error).message) }
     }
@@ -125,8 +128,4 @@ function DataPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<DataPage />)
+mountReact('root', <DataPage />)

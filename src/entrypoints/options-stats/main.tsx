@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 interface HlsStats {
@@ -27,18 +28,20 @@ function StatsPage() {
   }, [])
 
   async function loadStats() {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'getHlsStats' })
-      if (r?.total) setStats(r as HlsStats)
-    } catch { /* ignore */ }
+    const r = await request<Partial<HlsStats>>('getHlsStats')
+    if (!r?.total) return
+    setStats({
+      total: r.total,
+      byHost: r.byHost ?? {},
+      byRule: r.byRule ?? {},
+      recent: Array.isArray(r.recent) ? r.recent : [],
+    })
   }
 
   async function handleClearStats() {
     if (!confirm(i18n('options_confirm_clear_stats') ?? '确定清除所有统计数据？')) return
-    try {
-      await chrome.runtime.sendMessage({ type: 'clearHlsStats' })
-      setStats(null)
-    } catch (e) { alert(String(e)) }
+    const r = await request('clearHlsStats')
+    if (r) setStats(null)
   }
 
   const topHosts = stats
@@ -156,8 +159,4 @@ function StatsPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as unknown as { _reactRoot?: ReturnType<typeof createRoot> })._reactRoot) {
-  ;(rootEl as unknown as { _reactRoot: ReturnType<typeof createRoot> })._reactRoot = createRoot(rootEl)
-}
-;(rootEl as unknown as { _reactRoot: ReturnType<typeof createRoot> })._reactRoot.render(<StatsPage />)
+mountReact('root', <StatsPage />)

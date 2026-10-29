@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 interface HlsStats {
@@ -45,18 +46,31 @@ function HlsFilterPage() {
   }, [])
 
   async function loadConfig() {
-    try {
-      const fp = await chrome.runtime.sendMessage({ type: 'getHlsFingerprintConfig' })
-      if (fp) setFpConfig({
+    const fp = await request<{
+      enableFingerprint?: boolean
+      fingerprintMode?: string
+      autoLearnFingerprints?: boolean
+      remoteFingerprintsUrl?: string
+    }>('getHlsFingerprintConfig')
+    if (fp) {
+      setFpConfig({
         enableFingerprint: fp.enableFingerprint ?? false,
         fingerprintMode: fp.fingerprintMode ?? 'suspicious-only',
         autoLearnFingerprints: fp.autoLearnFingerprints ?? true,
         remoteFingerprintsUrl: fp.remoteFingerprintsUrl ?? '',
       })
-    } catch { /* ignore */ }
-    try {
-      const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
-      if (full) setFullConfig({
+    }
+
+    const full = await request<{
+      enableAdSkip?: boolean
+      showPageBadge?: boolean
+      keepDiscontinuityOnGap?: boolean
+      logToConsole?: boolean
+      scoreThreshold?: number
+      mode?: string
+    }>('getHlsFullConfig')
+    if (full) {
+      setFullConfig({
         enableAdSkip: full.enableAdSkip ?? true,
         showPageBadge: full.showPageBadge ?? true,
         keepDiscontinuityOnGap: full.keepDiscontinuityOnGap ?? true,
@@ -64,43 +78,42 @@ function HlsFilterPage() {
         scoreThreshold: full.scoreThreshold ?? 3,
         mode: full.mode ?? 'm3u8-file',
       })
-    } catch { /* ignore */ }
+    }
   }
 
   async function loadStats() {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'getHlsStats' })
-      if (r?.total) setStats(r as HlsStats)
-    } catch { /* ignore */ }
+    const r = await request<Partial<HlsStats>>('getHlsStats')
+    if (!r?.total) return
+    setStats({
+      total: r.total,
+      byHost: r.byHost ?? {},
+      byRule: r.byRule ?? {},
+      recent: Array.isArray(r.recent) ? r.recent : [],
+    })
   }
 
   async function handleSave() {
-    try {
-      await chrome.runtime.sendMessage({ type: 'setHlsFingerprintConfig', payload: fpConfig })
-      await chrome.runtime.sendMessage({
-        type: 'setHlsFullConfig',
-        payload: {
-          enableAdSkip: fullConfig.enableAdSkip,
-          showPageBadge: fullConfig.showPageBadge,
-          keepDiscontinuityOnGap: fullConfig.keepDiscontinuityOnGap,
-          logToConsole: fullConfig.logToConsole,
-          scoreThreshold: fullConfig.scoreThreshold,
-          mode: fullConfig.mode,
-        },
-      })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch (e) {
-      alert(i18n('options_save_failed') + ': ' + (e as Error).message)
+    const a = await request('setHlsFingerprintConfig', fpConfig)
+    const b = await request('setHlsFullConfig', {
+      enableAdSkip: fullConfig.enableAdSkip,
+      showPageBadge: fullConfig.showPageBadge,
+      keepDiscontinuityOnGap: fullConfig.keepDiscontinuityOnGap,
+      logToConsole: fullConfig.logToConsole,
+      scoreThreshold: fullConfig.scoreThreshold,
+      mode: fullConfig.mode,
+    })
+    if (!a || !b) {
+      alert(i18n('options_save_failed'))
+      return
     }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   async function handleClearStats() {
     if (!confirm(i18n('options_confirm_clear_stats') ?? '确定清除所有统计数据？')) return
-    try {
-      await chrome.runtime.sendMessage({ type: 'clearHlsStats' })
-      setStats(null)
-    } catch (e) { alert(String(e)) }
+    const r = await request('clearHlsStats')
+    if (r) setStats(null)
   }
 
   return (
@@ -250,20 +263,19 @@ function HlsFilterPage() {
           <button
             className="btn-secondary"
             onClick={async () => {
-              try {
-                await chrome.runtime.sendMessage({
-                  type: 'setHlsFingerprintConfig',
-                  payload: {
-                    ...fpConfig,
-                    enableFingerprint: true,
-                    fingerprintMode: 'all',
-                    autoLearnFingerprints: true,
-                  },
-                })
-                setFpConfig({ ...fpConfig, enableFingerprint: true, fingerprintMode: 'all', autoLearnFingerprints: true })
-                const r = await chrome.runtime.sendMessage({ type: 'getHlsFingerprintConfig' })
-                alert(i18n('options_boost_result', [String(r?.learnedCount ?? 0)]))
-              } catch (e) { alert(String(e)) }
+              const a = await request('setHlsFingerprintConfig', {
+                ...fpConfig,
+                enableFingerprint: true,
+                fingerprintMode: 'all',
+                autoLearnFingerprints: true,
+              })
+              if (!a) {
+                alert(i18n('options_save_failed'))
+                return
+              }
+              setFpConfig({ ...fpConfig, enableFingerprint: true, fingerprintMode: 'all', autoLearnFingerprints: true })
+              const r = await request<{ learnedCount?: number }>('getHlsFingerprintConfig')
+              alert(i18n('options_boost_result', [String(r?.learnedCount ?? 0)]))
             }}
           >
             🚀 {i18n('options_boost_detect')}
@@ -272,10 +284,9 @@ function HlsFilterPage() {
             className="btn-danger"
             onClick={async () => {
               if (!confirm(i18n('options_confirm_clear_fingerprints') ?? '确定清空所有已学习的指纹？')) return
-              try {
-                await chrome.runtime.sendMessage({ type: 'clearHlsFingerprints' })
-                alert(i18n('options_clear_fingerprints_ok') ?? '指纹库已清空')
-              } catch (e) { alert(String(e)) }
+              const r = await request('clearHlsFingerprints')
+              if (!r) return
+              alert(i18n('options_clear_fingerprints_ok') ?? '指纹库已清空')
             }}
           >
             🗑️ {i18n('options_clear_fingerprints') ?? '清空学习库'}
@@ -292,8 +303,4 @@ function HlsFilterPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<HlsFilterPage />)
+mountReact('root', <HlsFilterPage />)

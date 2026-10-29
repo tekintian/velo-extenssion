@@ -120,6 +120,9 @@
   "popup_url_copied": {
     "message": "✓ URL 已复制"
   },
+  "popup_copy_fail": {
+    "message": "复制失败，请检查剪贴板权限"
+  },
   "popup_no_media": {
     "message": "当前页无媒体"
   },
@@ -176,6 +179,9 @@
   },
   "popup_unknown_error": {
     "message": "未知错误"
+  },
+  "popup_clean_m3u8_sent": {
+    "message": "✓ 净化后的 m3u8 已发送"
   },
   "options_title": {
     "message": "Velo 扩展设置"
@@ -785,6 +791,9 @@
   "options_import_failed": {
     "message": "导入失败"
   },
+  "options_export_failed": {
+    "message": "导出失败"
+  },
   "options_privacy_title": {
     "message": "隐私数据说明"
   },
@@ -886,5 +895,17 @@
   },
   "options_rules_count": {
     "message": "条规则"
+  },
+  "options_refresh_ok": {
+    "message": "刷新成功"
+  },
+  "options_refresh_failed": {
+    "message": "刷新失败，请检查规则地址或后台状态"
+  },
+  "options_no_active_tab": {
+    "message": "无活动标签页"
+  },
+  "options_playback_read_fail": {
+    "message": "读取播放状态失败"
   }
 }

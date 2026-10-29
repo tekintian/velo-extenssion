@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect, useCallback } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request, requestArray } from '@/lib/messaging'
 import '@/assets/options.css'
 
 interface SiteList {
@@ -79,24 +80,18 @@ function DashFilterPage() {
   const [newRuleThreshold, setNewRuleThreshold] = useState(3)
 
   const loadFpList = useCallback(async () => {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'listDashLearnedFingerprints' })
-      if (r?.fingerprints) setFpList(r.fingerprints as FpEntry[])
-    } catch { /* ignore */ }
+    const r = await request<{ fingerprints?: FpEntry[] }>('listDashLearnedFingerprints')
+    if (Array.isArray(r?.fingerprints)) setFpList(r.fingerprints)
   }, [])
 
   const loadRules = useCallback(async () => {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'listDashRules' })
-      if (r) setRules(r as RuleItem[])
-    } catch { /* ignore */ }
+    const list = await requestArray<RuleItem>('listDashRules')
+    if (list) setRules(list)
   }, [])
 
   const loadSuggestions = useCallback(async () => {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'listDashSuggestPending' })
-      if (r) setSuggestions(r as SuggestionItem[])
-    } catch { /* ignore */ }
+    const list = await requestArray<SuggestionItem>('listDashSuggestPending')
+    if (list) setSuggestions(list)
   }, [])
 
   useEffect(() => {
@@ -127,14 +122,13 @@ function DashFilterPage() {
         setRemoteRulesUrl((cfg.remoteRulesUrl as string) ?? '')
       }
     } catch { /* ignore */ }
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'getDashFingerprintStats' })
-      if (r) setFpStats(r as { learned: number })
-    } catch { /* ignore */ }
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'getDashSites' })
-      if (r) setSiteList(r as SiteList)
-    } catch { /* ignore */ }
+    const stats = await request<{ learned?: number }>('getDashFingerprintStats')
+    if (typeof stats?.learned === 'number') setFpStats({ learned: stats.learned })
+
+    const sites = await request<{ builtin?: unknown; user?: unknown }>('getDashSites')
+    if (Array.isArray(sites?.builtin) && Array.isArray(sites?.user)) {
+      setSiteList({ builtin: sites.builtin as string[], user: sites.user as string[] })
+    }
   }
 
   async function handleSave() {
@@ -160,28 +154,25 @@ function DashFilterPage() {
 
   async function handleClearFingerprints() {
     if (!confirm(i18n('options_confirm_clear_fingerprints') ?? '确定清空所有已学习的指纹？')) return
-    try {
-      await chrome.runtime.sendMessage({ type: 'clearDashFingerprints' })
-      setFpStats({ learned: 0 })
-      setFpList([])
-      alert(i18n('options_clear_fingerprints_ok') ?? '指纹库已清空')
-    } catch (e) { alert(String(e)) }
+    const r = await request('clearDashFingerprints')
+    if (!r) return
+    setFpStats({ learned: 0 })
+    setFpList([])
+    alert(i18n('options_clear_fingerprints_ok') ?? '指纹库已清空')
   }
 
   async function handleRemoveFingerprint(hash: string) {
-    try {
-      await chrome.runtime.sendMessage({ type: 'removeDashLearnedFingerprint', payload: { hash } })
-      setFpList((prev) => prev.filter((fp) => fp.hash !== hash))
-      setFpStats((prev) => prev ? { learned: prev.learned - 1 } : prev)
-    } catch (e) { alert(String(e)) }
+    const r = await request('removeDashLearnedFingerprint', { hash })
+    if (!r) return
+    setFpList((prev) => prev.filter((fp) => fp.hash !== hash))
+    setFpStats((prev) => prev ? { learned: Math.max(0, prev.learned - 1) } : prev)
   }
 
   async function handleRefreshRules() {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'refreshDashRemoteRules', payload: { url: remoteRulesUrl } })
-      alert(`规则已刷新: ${r?.rules ?? 0} 条`)
-      void loadRules()
-    } catch (e) { alert(String(e)) }
+    const r = await request<{ rules?: number }>('refreshDashRemoteRules', { url: remoteRulesUrl })
+    if (!r) return
+    alert(`规则已刷新: ${r.rules ?? 0} 条`)
+    void loadRules()
   }
 
   async function handleAddUserRule() {
@@ -192,61 +183,55 @@ function DashFilterPage() {
       alert('域名匹配和广告 URL 模式不能为空')
       return
     }
-    try {
-      const rule = {
-        id: `user-dash-${Date.now()}`,
-        name: name || `自定义 (${host})`,
-        hostPattern: host,
-        adUrlPatterns: pats,
-        scoreThreshold: newRuleThreshold,
-        forceKeep: [] as string[],
-      }
-      await chrome.runtime.sendMessage({ type: 'addDashUserRule', payload: { rule } })
-      setNewRuleName('')
-      setNewRuleHost('')
-      setNewRulePatterns('')
-      setNewRuleThreshold(3)
-      void loadRules()
-    } catch (e) { alert(String(e)) }
+    const rule = {
+      id: `user-dash-${Date.now()}`,
+      name: name || `自定义 (${host})`,
+      hostPattern: host,
+      adUrlPatterns: pats,
+      scoreThreshold: newRuleThreshold,
+      forceKeep: [] as string[],
+    }
+    const r = await request('addDashUserRule', { rule })
+    if (!r) return
+    setNewRuleName('')
+    setNewRuleHost('')
+    setNewRulePatterns('')
+    setNewRuleThreshold(3)
+    void loadRules()
   }
 
   async function handleRemoveUserRule(id: string) {
-    try {
-      await chrome.runtime.sendMessage({ type: 'removeDashUserRule', payload: { id } })
-      void loadRules()
-    } catch (e) { alert(String(e)) }
+    const r = await request('removeDashUserRule', { id })
+    if (!r) return
+    void loadRules()
   }
 
   async function handleApproveSuggestion(id: string) {
-    try {
-      await chrome.runtime.sendMessage({ type: 'approveDashSuggest', payload: { id } })
-      void loadSuggestions()
-      void loadRules()
-    } catch (e) { alert(String(e)) }
+    const r = await request('approveDashSuggest', { id })
+    if (!r) return
+    void loadSuggestions()
+    void loadRules()
   }
 
   async function handleDismissSuggestion(id: string) {
-    try {
-      await chrome.runtime.sendMessage({ type: 'dismissDashSuggest', payload: { id } })
-      void loadSuggestions()
-    } catch (e) { alert(String(e)) }
+    const r = await request('dismissDashSuggest', { id })
+    if (!r) return
+    void loadSuggestions()
   }
 
   async function handleAddSite() {
     const domain = newSite.trim().toLowerCase()
     if (!domain) return
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'addDashSite', payload: { domain } })
-      if (r) setSiteList((prev) => ({ ...prev, user: (r as { sites: string[] }).sites }))
-      setNewSite('')
-    } catch (e) { alert(String(e)) }
+    const r = await request<{ sites?: unknown }>('addDashSite', { domain })
+    if (!Array.isArray(r?.sites)) return
+    setSiteList((prev) => ({ ...prev, user: r.sites as string[] }))
+    setNewSite('')
   }
 
   async function handleRemoveSite(domain: string) {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'removeDashSite', payload: { domain } })
-      if (r) setSiteList((prev) => ({ ...prev, user: (r as { sites: string[] }).sites }))
-    } catch (e) { alert(String(e)) }
+    const r = await request<{ sites?: unknown }>('removeDashSite', { domain })
+    if (!Array.isArray(r?.sites)) return
+    setSiteList((prev) => ({ ...prev, user: r.sites as string[] }))
   }
 
   return (
@@ -602,8 +587,4 @@ function DashFilterPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<DashFilterPage />)
+mountReact('root', <DashFilterPage />)

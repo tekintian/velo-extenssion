@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 function GeneralPage() {
@@ -15,14 +16,12 @@ function GeneralPage() {
   }, [])
 
   async function loadConfig() {
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'getExtensionEnabled' }) as { enabled?: boolean }
-      if (r) setEnabled(r.enabled ?? true)
-    } catch { /* ignore */ }
-    try {
-      const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
-      if (full) setHlsEnabled(full.enableAdSkip ?? true)
-    } catch { /* ignore */ }
+    const r = await request<{ enabled?: boolean }>('getExtensionEnabled')
+    if (r) setEnabled(r.enabled ?? true)
+
+    const full = await request<{ enableAdSkip?: boolean }>('getHlsFullConfig')
+    if (full) setHlsEnabled(full.enableAdSkip ?? true)
+
     try {
       const stored = await chrome.storage.local.get('language')
       if (stored.language) setLanguage(String(stored.language))
@@ -30,18 +29,20 @@ function GeneralPage() {
   }
 
   async function handleSave() {
+    const a = await request('setExtensionEnabled', { enabled })
+    const b = await request('setHlsFullConfig', { enableAdSkip: hlsEnabled })
     try {
-      await chrome.runtime.sendMessage({ type: 'setExtensionEnabled', payload: { enabled } })
-      await chrome.runtime.sendMessage({
-        type: 'setHlsFullConfig',
-        payload: { enableAdSkip: hlsEnabled },
-      })
       await chrome.storage.local.set({ language })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
     } catch (e) {
       alert(i18n('options_save_failed') + ': ' + (e as Error).message)
+      return
     }
+    if (!a || !b) {
+      alert(i18n('options_save_failed'))
+      return
+    }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   return (
@@ -104,8 +105,4 @@ function GeneralPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<GeneralPage />)
+mountReact('root', <GeneralPage />)

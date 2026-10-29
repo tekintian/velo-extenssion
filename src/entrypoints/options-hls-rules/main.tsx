@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request, requestArray } from '@/lib/messaging'
 import '@/assets/options.css'
 
 interface RuleItem {
@@ -35,23 +36,18 @@ function RulesPage() {
 
   const loadData = async () => {
     setLoading(true)
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'listHlsRules' })
-      if (r?.rules) setRules(r.rules)
-      const s = await chrome.runtime.sendMessage({ type: 'listSuggestions' })
-      if (s?.suggestions) setSuggestions(s.suggestions)
-    } catch { /* ignore */ }
+    const r = await request<{ rules?: unknown }>('listHlsRules')
+    if (Array.isArray(r?.rules)) setRules(r.rules as RuleItem[])
+    const s = await requestArray<SuggestionItem>('listSuggestions')
+    if (s) setSuggestions(s)
     setLoading(false)
   }
 
   async function loadCustomRules() {
-    try {
-      const full = await chrome.runtime.sendMessage({ type: 'getHlsFullConfig' })
-      if (full) {
-        setUrlPatterns(Array.isArray(full.urlPatterns) ? full.urlPatterns.join('\n') : '')
-        setRemoteRulesUrl(full.remoteRulesUrl ?? '')
-      }
-    } catch { /* ignore */ }
+    const full = await request<{ urlPatterns?: unknown; remoteRulesUrl?: string }>('getHlsFullConfig')
+    if (!full) return
+    setUrlPatterns(Array.isArray(full.urlPatterns) ? full.urlPatterns.join('\n') : '')
+    setRemoteRulesUrl(full.remoteRulesUrl ?? '')
   }
 
   useEffect(() => {
@@ -60,33 +56,28 @@ function RulesPage() {
   }, [])
 
   const handleApprove = async (id: string) => {
-    try {
-      await chrome.runtime.sendMessage({ type: 'approveSuggestion', payload: { id } })
-      void loadData()
-    } catch (e) { alert(String(e)) }
+    const r = await request('approveSuggestion', { id })
+    if (!r) return
+    void loadData()
   }
 
   const handleDismiss = async (id: string) => {
-    try {
-      await chrome.runtime.sendMessage({ type: 'dismissSuggestion', payload: { id } })
-      void loadData()
-    } catch (e) { alert(String(e)) }
+    const r = await request('dismissSuggestion', { id })
+    if (!r) return
+    void loadData()
   }
 
   async function handleSaveCustomRules() {
-    try {
-      await chrome.runtime.sendMessage({
-        type: 'setHlsFullConfig',
-        payload: {
-          urlPatterns: urlPatterns.split('\n').filter(Boolean),
-          remoteRulesUrl,
-        },
-      })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch (e) {
-      alert(i18n('options_save_failed') + ': ' + (e as Error).message)
+    const r = await request('setHlsFullConfig', {
+      urlPatterns: urlPatterns.split('\n').filter(Boolean),
+      remoteRulesUrl,
+    })
+    if (!r) {
+      alert(i18n('options_save_failed'))
+      return
     }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   async function handleRefreshRemote() {
@@ -94,16 +85,13 @@ function RulesPage() {
       alert(i18n('options_remote_rules_url') + ' ' + i18n('options_is_empty'))
       return
     }
-    try {
-      const r = await chrome.runtime.sendMessage({
-        type: 'refreshHlsRemoteRules',
-        payload: { url: remoteRulesUrl.trim() },
-      })
-      alert(i18n('options_refresh_ok') + ': ' + (r?.rules ?? 0) + ' ' + i18n('options_rules_count'))
-      void loadData()
-    } catch (e) {
-      alert(String(e))
+    const r = await request<{ rules?: number }>('refreshHlsRemoteRules', { url: remoteRulesUrl.trim() })
+    if (!r) {
+      alert(i18n('options_refresh_failed'))
+      return
     }
+    alert(i18n('options_refresh_ok') + ': ' + (r.rules ?? 0) + ' ' + i18n('options_rules_count'))
+    void loadData()
   }
 
   const sourceLabel = (src: string) => {
@@ -202,8 +190,4 @@ function RulesPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<RulesPage />)
+mountReact('root', <RulesPage />)

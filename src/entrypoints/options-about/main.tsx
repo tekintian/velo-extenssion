@@ -1,4 +1,4 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
 import '@/assets/options.css'
@@ -54,8 +54,4 @@ function AboutPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<AboutPage />)
+mountReact('root', <AboutPage />)

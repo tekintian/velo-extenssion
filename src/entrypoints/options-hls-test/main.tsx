@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request } from '@/lib/messaging'
 import '@/assets/options.css'
 
 interface TestResult {
@@ -27,21 +28,20 @@ function TestPage() {
     setLoading(true)
     setError('')
     setResult(null)
-    try {
-      const r = await chrome.runtime.sendMessage({
-        type: 'testM3u8',
-        payload: { url: url.trim(), host: host.trim() || undefined },
-      })
-      if (r?.error) {
-        setError(r.error)
-      } else {
-        setResult(r)
-      }
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
+    const r = await request<Partial<TestResult> & { error?: string }>('testM3u8', {
+      url: url.trim(),
+      host: host.trim() || undefined,
+    })
+    if (!r) {
+      setError('请求失败：后台未响应，请重新加载扩展后重试')
+    } else if (typeof r.error === 'string') {
+      setError(r.error)
+    } else if (!Array.isArray(r.reasons)) {
+      setError('返回数据结构异常：缺少分片分析结果')
+    } else {
+      setResult(r as TestResult)
     }
+    setLoading(false)
   }
 
   return (
@@ -138,8 +138,4 @@ function TestPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<TestPage />)
+mountReact('root', <TestPage />)

@@ -1,7 +1,8 @@
-import { createRoot } from 'react-dom/client'
+import { mountReact } from '@/lib/mount'
 import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
+import { request, requestArray } from '@/lib/messaging'
 import '@/assets/options.css'
 
 interface SampleItem {
@@ -19,10 +20,8 @@ function SamplesPage() {
 
   const loadSamples = async () => {
     setLoading(true)
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'listSamples' })
-      if (Array.isArray(r)) setSamples(r)
-    } catch { /* ignore */ }
+    const list = await requestArray<SampleItem>('listSamples')
+    if (list) setSamples(list)
     setLoading(false)
   }
 
@@ -32,23 +31,23 @@ function SamplesPage() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) throw new Error(i18n('options_no_active_tab'))
-      const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' })
+      const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' }) as
+        { ok?: boolean; currentTime?: number; error?: string } | undefined
       if (!pb?.ok) throw new Error(i18n('options_playback_read_fail') + ': ' + (pb?.error || '?'))
-      const result = await chrome.runtime.sendMessage({
-        type: 'captureSample',
-        payload: { tabId: tab.id, currentTime: pb.currentTime },
+      const result = await request<{ success?: boolean; message?: string; error?: string }>('captureSample', {
+        tabId: tab.id,
+        currentTime: pb.currentTime ?? 0,
       })
       if (!result?.success) throw new Error(i18n('popup_capture_fail', [result?.message || result?.error || '?']))
-      alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime)}s)`)
+      alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime ?? 0)}s)`)
       void loadSamples()
     } catch (e) { alert(String(e)) }
   }
 
   const handleDelete = async (id: string) => {
-    try {
-      await chrome.runtime.sendMessage({ type: 'deleteSample', payload: { id } })
-      void loadSamples()
-    } catch (e) { alert(String(e)) }
+    const r = await request('deleteSample', { id })
+    if (!r) return
+    void loadSamples()
   }
 
   return (
@@ -105,10 +104,9 @@ function SamplesPage() {
       <div className="hls-actions">
         <button className="btn-danger" onClick={async () => {
           if (!confirm(i18n('options_confirm_clear_samples'))) return
-          try {
-            await chrome.runtime.sendMessage({ type: 'clearSamples' })
-            setSamples([])
-          } catch (e) { alert(String(e)) }
+          const r = await request('clearSamples')
+          if (!r) return
+          setSamples([])
         }}>
           {i18n('options_clear_all_samples')}
         </button>
@@ -117,8 +115,4 @@ function SamplesPage() {
   )
 }
 
-const rootEl = document.getElementById('root')!
-if (!(rootEl as any)._reactRoot) {
-  ;(rootEl as any)._reactRoot = createRoot(rootEl)
-}
-;(rootEl as any)._reactRoot.render(<SamplesPage />)
+mountReact('root', <SamplesPage />)
