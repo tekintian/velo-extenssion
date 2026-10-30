@@ -89,7 +89,7 @@
     "message": "桌面端"
   },
   "popup_ad_filter": {
-    "message": "广告过滤"
+    "message": "HLS广告过滤"
   },
   "popup_enabled": {
     "message": "已启用"
@@ -313,7 +313,7 @@
     "message": "保存配置"
   },
   "options_filter_title": {
-    "message": "广告过滤"
+    "message": "HLS广告过滤"
   },
   "options_threshold_label": {
     "message": "评分阈值（默认 3）"
@@ -534,7 +534,7 @@
     "message": "HLS 广告过滤"
   },
   "options_nav_hls_filter_desc": {
-    "message": "广告过滤开关、评分阈值、指纹库、自定义规则"
+    "message": "HLS广告过滤开关、评分阈值、指纹库、自定义规则"
   },
   "options_nav_dash_filter": {
     "message": "DASH 广告过滤"
