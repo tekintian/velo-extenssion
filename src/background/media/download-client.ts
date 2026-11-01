@@ -20,6 +20,19 @@ import { createPushClient } from '@/background/push-client'
 const DOWNLOAD_CONFIG_KEY = 'downloadClientConfig'
 
 /**
+ * 归一化推送用的 HTTP 方法
+ *
+ * 嗅探到的请求可能是 HEAD 探测（页面用它只取响应头拿 Content-Length/Content-Type），
+ * 而"下载"语义必然是 GET；桌面端会拒绝 HEAD（无响应体可落盘），
+ * 因此这里把 HEAD 归一化为 GET，避免用户点下载后只收到一条注定失败的任务。
+ */
+function normalizeDownloadMethod(method?: string): string {
+  const m = method?.trim().toUpperCase()
+  if (!m || m === 'HEAD') return 'GET'
+  return m
+}
+
+/**
  * 加载下载客户端配置
  */
 export async function getDownloadConfig(): Promise<DownloadClientConfig> {
@@ -76,7 +89,7 @@ export async function sendToDownloadClient(
         base_url: undefined as string | undefined,
         content_type: extra?.contentType,
         content_disposition: extra?.contentDisposition,
-        method: extra?.method ?? 'GET',
+        method: normalizeDownloadMethod(extra?.method),
         post_data: extra?.requestBody,
         headers,
         options: {
@@ -370,7 +383,8 @@ export async function sendToNdm(
 function ndmSendPayload(ws: WebSocket, url: string, fileName: string | undefined, extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined }, headerLevel?: HeaderForwardLevel): void {
   // NDM WebSocket 协议（多行键值，移植自 bg.js V.I）:
   const level = headerLevel ?? 'full'
-  const method = extra?.method || 'GET'
+  // HEAD 探测归一化为 GET：下载语义必然是取响应体
+  const method = normalizeDownloadMethod(extra?.method)
   const pageUrl = extra?.pageUrl || ''
   const contentType = extra?.contentType || ''
   const contentDisposition = extra?.contentDisposition || ''
@@ -784,7 +798,8 @@ function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined,
     content_type: extra?.contentType ?? undefined,
     content_disposition: extra?.contentDisposition ?? undefined,
     // === HTTP 方法 + POST body 透传（移植自 NDM bg.js V.I __0NeatPostData9__） ===
-    method: extra?.method ?? undefined,
+    // HEAD 探测归一化为 GET：下载语义必然是取响应体，桌面端也会拒绝 HEAD
+    method: normalizeDownloadMethod(extra?.method),
     post_data: extra?.requestBody ?? undefined,
     headers: buildVeloHeaders(extra, headerLevel),
     options: {
@@ -800,7 +815,7 @@ function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined,
     'headers:', msg.headers ? Object.keys(msg.headers) : 'none',
     'ct:', extra?.contentType ?? '(none)',
     'cd:', extra?.contentDisposition ? '(set)' : '(none)',
-    'method:', extra?.method ?? 'GET',
+    'method:', normalizeDownloadMethod(extra?.method),
   )
   ws.send(payload)
 }
@@ -963,7 +978,7 @@ export async function pushHls(
     base_url: descriptor.url,
     content_type: descriptor.contentType || 'application/vnd.apple.mpegurl',
     content_disposition: descriptor.contentDisposition || undefined,
-    method: descriptor.method || 'GET',
+    method: normalizeDownloadMethod(descriptor.method),
     headers: buildVeloHeaders(extra, level),
     options: {
       filename: fileName || undefined,
@@ -995,7 +1010,7 @@ export async function pushUrl(
     base_url: undefined as string | undefined,
     content_type: descriptor.contentType || undefined,
     content_disposition: descriptor.contentDisposition || undefined,
-    method: descriptor.method || 'GET',
+    method: normalizeDownloadMethod(descriptor.method),
     headers: buildVeloHeaders(extra, level),
     options: {
       filename: fileName || undefined,
@@ -1025,7 +1040,7 @@ export async function pushNormal(
     base_url: undefined as string | undefined,
     content_type: descriptor.contentType || undefined,
     content_disposition: descriptor.contentDisposition || undefined,
-    method: descriptor.method || 'GET',
+    method: normalizeDownloadMethod(descriptor.method),
     headers: buildVeloHeaders(extra, level),
     options: {
       filename: fileName || undefined,

@@ -72,9 +72,9 @@ export interface PushMessage {
   content_type?: string
   /** 透传 Content-Disposition（NDM bg.js T() 函数 b["11"]），桌面端可优先取其 filename */
   content_disposition?: string
-  /** HTTP 方法（GET/POST），用于桌面端复刻带 POST body 的请求 */
+  /** HTTP 方法（GET/HEAD/POST/PUT/PATCH...），用于桌面端复刻带请求体的请求 */
   method?: string
-  /** POST 请求体（移植自 NDM bg.js V.I __0NeatPostData9__ 字段） */
+  /** 请求体（移植自 NDM bg.js V.I __0NeatPostData9__ 字段），非 GET/HEAD 时由桌面端直连下载器执行 */
   post_data?: string
   headers?: Record<string, string>
   options: PushOptions

@@ -9,6 +9,26 @@ export interface ProbeResult {
   tokenRequired: boolean
 }
 
+/**
+ * 扩展自身身份：握手时上报给桌面端，供「确认配对」时直接转正，
+ * 免去用户在设置页手工填写扩展 ID / 设备名。
+ */
+export function getExtensionIdentity(): { extension_id: string; device_name: string } {
+  let extensionId = ''
+  try {
+    extensionId = chrome.runtime.id
+  } catch {
+    // service worker 早期阶段 chrome.runtime 可能不可用 — 留空由桌面端兜底
+  }
+  let deviceName = 'velo-extension'
+  try {
+    deviceName = chrome.runtime.getManifest().name || deviceName
+  } catch {
+    // 忽略
+  }
+  return { extension_id: extensionId, device_name: deviceName }
+}
+
 export class PairingManager {
   async getPairing(): Promise<PairingInfo | null> {
     try {
@@ -47,6 +67,7 @@ export class PairingManager {
             version: PROTOCOL_VERSION,
             action: 'handshake',
             token,
+            ...getExtensionIdentity(),
             options: { merge_format: '' },
           }
           ws.send(JSON.stringify(handshake))

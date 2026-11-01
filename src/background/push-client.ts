@@ -2,6 +2,7 @@ import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
 import { PROTOCOL_VERSION, SUB_PROTOCOL, RECONNECT_DELAYS, QUEUE_MAX_SIZE, STORAGE_KEYS } from '@/types'
 import { persistentStorage } from '@/lib/storage'
+import { getExtensionIdentity } from './pairing'
 import type { PushMessage } from '@/types'
 
 interface PushQueueItem {
@@ -197,6 +198,20 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       clearBadge()
       clearDisconnectNotification()
       startHeartbeat()  // P2: 启动心跳
+      // 上报扩展身份：桌面端据此把 pending 配对占位条目补全，供用户一键确认
+      if (token) {
+        try {
+          ws?.send(JSON.stringify({
+            version: PROTOCOL_VERSION,
+            action: 'handshake',
+            token,
+            ...getExtensionIdentity(),
+            options: { merge_format: '' },
+          }))
+        } catch (e) {
+          logger.debug('握手消息发送失败:', (e as Error).message)
+        }
+      }
       void flushQueue()
     }
 
