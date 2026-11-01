@@ -98,12 +98,12 @@ export class PairingManager {
   }
 
   /**
-   * 探测 Velo 桌面端是否在运行。
+   * 探测 Velo 桌面端是否在运行（纯 WebSocket 握手探测）。
    *
-   * 策略：
-   *   1. 先尝试 WS 握手（空 token）— 若 ok=true 说明客户端无需 token
-   *   2. 若 WS 连接失败，再尝试 HTTP /health 探活
-   *   3. 按端口列表依次探测（默认端口 + 已保存端口）
+   * 说明：velo 推送服务只接受 WebSocket（HTTP 路径不返回响应），因此探活必须
+   * 直接建 WS。桌面端未启动时浏览器网络层会打印一条 ERR_CONNECTION_REFUSED
+   * 原生日志，JS 无法捕获——通过调用方节流（自动探测失败后一段时间内不再重试）
+   * 把这类「已知异常」降到最低，而不是在扩展里主动报错。
    *
    * @returns ProbeResult — available=true 表示客户端可连接，tokenRequired 表示是否需要 token
    */
@@ -113,10 +113,6 @@ export class PairingManager {
       const wsResult = await this.probeWs(port)
       if (wsResult.available) {
         return { available: true, port, tokenRequired: wsResult.tokenRequired }
-      }
-      const httpResult = await this.probeHttp(port)
-      if (httpResult) {
-        return { available: true, port, tokenRequired: true }
       }
     }
     return { available: false, port: 0, tokenRequired: true }
@@ -169,23 +165,5 @@ export class PairingManager {
         resolve({ available: false, tokenRequired: true })
       }
     })
-  }
-
-  private async probeHttp(port: number): Promise<boolean> {
-    try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 3000)
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/health`, {
-          method: 'GET',
-          signal: controller.signal,
-        })
-        return res.ok
-      } finally {
-        clearTimeout(timer)
-      }
-    } catch {
-      return false
-    }
   }
 }

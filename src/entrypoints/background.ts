@@ -14,7 +14,7 @@ import { registerDashHandlers } from '@/background/dash/handler'
 import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
 import { migrateAdFilterKeys } from '@engine/shared/storage'
 import { recordStats } from '@/engine/hls/stats'
-import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, type VeloConfig } from '@/types'
+import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, STORAGE_KEYS, type VeloConfig } from '@/types'
 import { configStore, persistentStorage } from '@/lib/storage'
 import type { MediaDescriptor } from '@/types'
 import { extractBaseName } from '@/lib/naming'
@@ -212,6 +212,8 @@ function registerHandlers(): void {
     const { token, port } = message.payload
     const pairing = new PairingManager()
     await pairing.savePairing(token ?? '', port ?? DEFAULT_SDOWN_CONFIG.port)
+    // 用户主动保存配对 → 清除自动连接冷却，立即建立连接
+    await clearAutoConnectFailure()
     if (pushClient) pushClient.disconnect()
     pushClient = createPushClient(config.pushChannel, port ?? DEFAULT_SDOWN_CONFIG.port, token ?? '')
     pushClient.connect()
@@ -248,7 +250,8 @@ function registerHandlers(): void {
   })
 
   registerHandler('velo-auto-connect', async () => {
-    const result = await tryAutoConnect()
+    // popup 手动触发属于用户主动行为，绕过节流冷却
+    const result = await tryAutoConnect(true)
     return result
   })
 }
@@ -277,16 +280,23 @@ async function initBackground(): Promise<void> {
 
   const pairing = new PairingManager()
   const pairingInfo = await pairing.getPairing()
-  if (pairingInfo) {
+  if (await isAutoConnectCoolingDown()) {
+    // 冷却窗口内不再探测：桌面端未启动是常规状态，避免 SW 频繁唤醒反复建 WS
+    logger.info('Auto-connect skipped: recent failure within cooldown window')
+  } else if (pairingInfo) {
     const probeResult = await pairing.probeClient([pairingInfo.port])
     if (probeResult.available) {
+      await clearAutoConnectFailure()
       pushClient = createPushClient(config.pushChannel, probeResult.port, pairingInfo.token)
       pushClient.connect()
       setPushClient(pushClient)
     } else {
-      logger.info('Paired client on port', pairingInfo.port, 'is not reachable — clearing stale pairing')
-      await pairing.clearPairing()
-      void tryAutoConnect()
+      await markAutoConnectFailed()
+      logger.info(
+        'Paired client on port',
+        pairingInfo.port,
+        'is not reachable — skip auto-connect (cooldown)',
+      )
     }
   } else {
     void tryAutoConnect()
@@ -296,11 +306,19 @@ async function initBackground(): Promise<void> {
   setM3u8ProcessHandler(veloProcessM3u8)
 
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'velo-download-link',
-      title: '使用 velo 下载',
-      contexts: ['link', 'image', 'video', 'audio'],
-    })
+    chrome.contextMenus.create(
+      {
+        id: 'velo-download-link',
+        title: '使用 velo 下载',
+        contexts: ['link', 'image', 'video', 'audio'],
+      },
+      () => {
+        // 必须消费 lastError，否则 Chrome 会打印 "Unchecked runtime.lastError"
+        if (chrome.runtime.lastError) {
+          logger.debug('contextMenus.create failed:', chrome.runtime.lastError.message ?? '')
+        }
+      },
+    )
   })
 
   chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -312,7 +330,47 @@ async function initBackground(): Promise<void> {
   logger.info('Background async init done')
 }
 
-async function tryAutoConnect(): Promise<ProbeResult & { connected?: boolean }> {
+/**
+ * 自动连接失败冷却窗口（5 分钟）
+ *
+ * 桌面端未启动属于常规状态。直接 new WebSocket 探测会在扩展控制台产生
+ * `net::ERR_CONNECTION_REFUSED` 浏览器原生日志（JS 无法捕获）。MV3 service worker
+ * 会被频繁唤醒，若每次唤醒都无脑探测就会刷屏。因此把「上次失败时间」持久化，
+ * 冷却窗口内跳过自动探测；用户主动触发（popup 手动连接 / 保存配对 / 点击下载）不受限制。
+ */
+const AUTO_CONNECT_COOLDOWN_MS = 5 * 60 * 1000
+
+async function isAutoConnectCoolingDown(): Promise<boolean> {
+  try {
+    const lastFailAt = await persistentStorage.get<number>(STORAGE_KEYS.autoConnectFailAt)
+    if (typeof lastFailAt !== 'number') return false
+    return Date.now() - lastFailAt < AUTO_CONNECT_COOLDOWN_MS
+  } catch {
+    return false
+  }
+}
+
+async function markAutoConnectFailed(): Promise<void> {
+  try {
+    await persistentStorage.set(STORAGE_KEYS.autoConnectFailAt, Date.now())
+  } catch {
+    /* ignore */
+  }
+}
+
+async function clearAutoConnectFailure(): Promise<void> {
+  try {
+    await persistentStorage.remove(STORAGE_KEYS.autoConnectFailAt)
+  } catch {
+    /* ignore */
+  }
+}
+
+async function tryAutoConnect(force = false): Promise<ProbeResult & { connected?: boolean }> {
+  if (!force && (await isAutoConnectCoolingDown())) {
+    logger.info('Auto-connect skipped: recent failure within cooldown window')
+    return { available: false, port: 0, tokenRequired: true, connected: false }
+  }
   const pairing = new PairingManager()
   const probePorts = [DEFAULT_SDOWN_CONFIG.port]
   if (config.port && config.port !== DEFAULT_SDOWN_CONFIG.port) {
@@ -335,6 +393,7 @@ async function tryAutoConnect(): Promise<ProbeResult & { connected?: boolean }> 
         // 空 token 握手成功 → 继续用空 token 连接
       }
     }
+    await clearAutoConnectFailure()
     await pairing.savePairing(token, result.port)
     if (pushClient) pushClient.disconnect()
     pushClient = createPushClient(config.pushChannel, result.port, token)
@@ -343,7 +402,8 @@ async function tryAutoConnect(): Promise<ProbeResult & { connected?: boolean }> 
     logger.info('Auto-connected to Velo client on port', result.port, 'tokenRequired:', result.tokenRequired, 'token:', token ? '***' : '(empty)')
     return { ...result, connected: true }
   }
-  logger.info('Velo client not detected, auto-connect skipped')
+  await markAutoConnectFailed()
+  logger.info('Velo client not detected, auto-connect skipped (cooldown 5min)')
   return { ...result, connected: false }
 }
 

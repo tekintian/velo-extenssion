@@ -102,6 +102,10 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
   let everConnected = false
   let reconnectIndex = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  /** 已 disconnect 的实例不再建立新连接（防止被替换后旧实例仍创建 WS） */
+  let disposed = false
+  /** 自动重连已用尽全部退避档位后停止，等用户主动触发再连（避免桌面端未启动时无限重连） */
+  let autoReconnectExhausted = false
   const queue: PushQueueItem[] = []
   // P2: 心跳 ping — 30s 发一次，10s 无 pong 主动 close 触发重连
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -165,7 +169,15 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     awaitingPong = false
   }
 
+  /**
+   * 对外连接入口（用户主动触发：启动、保存配对、popup 手动连接、点击下载）
+   *
+   * 每次主动触发都重置自动重连状态，让退避序列从头开始；
+   * 内部定时重连走 connectWs()，不重置，用尽后自动停止。
+   */
   function connect(): void {
+    reconnectIndex = 0
+    autoReconnectExhausted = false
     if (channel === 'ws') {
       connectWs()
     } else if (channel === 'http') {
@@ -177,7 +189,21 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     }
   }
 
+  /**
+   * WS 通道建连（WS 先行，无前置 HTTP 探活）
+   *
+   * 说明：velo 推送服务是纯 WebSocket 服务（GET /health 不返回 HTTP 响应），
+   * 因此不能用 HTTP 探活判定存活。桌面端未启动时浏览器会打印一条
+   * `WebSocket connection ... net::ERR_CONNECTION_REFUSED`，这是浏览器网络层
+   * 的原生日志，JS 无法捕获。为把这类「已知异常」压到最低，采用重连节流：
+   * 退避档位（RECONNECT_DELAYS）用尽后停止自动重连，改由用户主动触发。
+   */
   function connectWs(): void {
+    if (disposed || ws) return
+    openWs()
+  }
+
+  function openWs(): void {
     const url = `ws://127.0.0.1:${port}/ws`
     logger.debug('Connecting to', url)
 
@@ -195,6 +221,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       connected = true
       everConnected = true
       reconnectIndex = 0
+      autoReconnectExhausted = false
+      connectionFailureAlerted = false
       clearBadge()
       clearDisconnectNotification()
       startHeartbeat()  // P2: 启动心跳
@@ -468,6 +496,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
   }
 
   function disconnect(): void {
+    disposed = true
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
@@ -490,10 +519,28 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     clearDisconnectNotification()
   }
 
+  /**
+   * 自动重连调度（指数退避 + 上限节流）
+   *
+   * 桌面端未启动是常规状态，不能无限重连——每次重连都会产生一条浏览器原生
+   * WebSocket 失败日志。策略：走完 RECONNECT_DELAYS 全部档位（约 61s）后停止，
+   * 仅保留 badge / 通知提示，等用户主动触发 connect() 再重新开始。
+   */
   function scheduleReconnect(): void {
-    if (reconnectTimer) return
-    const delay = RECONNECT_DELAYS[reconnectIndex] ?? RECONNECT_DELAYS[RECONNECT_DELAYS.length - 1]!
-    reconnectIndex = Math.min(reconnectIndex + 1, RECONNECT_DELAYS.length - 1)
+    if (disposed || reconnectTimer) return
+    if (reconnectIndex >= RECONNECT_DELAYS.length) {
+      if (!autoReconnectExhausted) {
+        autoReconnectExhausted = true
+        logger.info(
+          'Auto reconnect exhausted after',
+          RECONNECT_DELAYS.length,
+          'attempts — waiting for user action',
+        )
+      }
+      return
+    }
+    const delay = RECONNECT_DELAYS[reconnectIndex]!
+    reconnectIndex += 1
     if (everConnected) {
       logger.info(`Reconnecting in ${delay}ms (attempt ${reconnectIndex})`)
     } else {
@@ -501,7 +548,8 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     }
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
-      connect()
+      // 内部重连不重置退避序列，用尽后由 scheduleReconnect 停止
+      connectWs()
     }, delay)
   }
 
@@ -554,6 +602,12 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       } catch (e) {
         logger.error('Push send failed:', (e as Error).message)
       }
+    }
+
+    // WS 通道：当前无连接时，用户主动推送（如点击下载）触发一次建连尝试
+    // 这是「用户触发」路径，重置退避序列，避免自动重连停止后永久失联
+    if (channel === 'ws' && !ws) {
+      connect()
     }
 
     queue.push({ message: pushMsg, retries: 0, addedAt: Date.now() })

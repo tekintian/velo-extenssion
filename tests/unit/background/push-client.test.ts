@@ -75,17 +75,27 @@ describe('PushClient — ws channel (回归)', () => {
     vi.clearAllMocks()
   })
 
-  it('connect 创建 WebSocket 到 ws://127.0.0.1:{port}/ws', () => {
+  it('connect 创建 WebSocket 到 ws://127.0.0.1:{port}/ws', async () => {
+    // connectWs 先 HTTP 探活 /health，探活通过后才 new WebSocket，
+    // 因此必须等待异步链路完成，不能同步断言（否则必然是 0 次调用）。
+    mockFetch.mockResolvedValue({ ok: true } as Response)
     const client = createPushClient('ws', 16888, 'test-token')
     client.connect()
-    expect(WebSocket).toHaveBeenCalledWith('ws://127.0.0.1:16888/ws', ['velo-ext.v1'])
+    await vi.waitFor(() => {
+      expect(WebSocket).toHaveBeenCalledWith('ws://127.0.0.1:16888/ws', ['velo-ext.v1'])
+    })
+    client.disconnect()
   })
 
-  it('disconnect 关闭 WebSocket', () => {
+  it('disconnect 关闭 WebSocket', async () => {
+    mockFetch.mockResolvedValue({ ok: true } as Response)
     const client = createPushClient('ws', 16888, 'test-token')
     client.connect()
+    await vi.waitFor(() => {
+      expect(WebSocket).toHaveBeenCalled()
+    })
     client.disconnect()
-    // 不抛错即可
+    expect(mockWsClose).toHaveBeenCalled()
   })
 
   it('push 不连接时入队', async () => {

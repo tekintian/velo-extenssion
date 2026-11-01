@@ -8,6 +8,7 @@ export const STORAGE_KEYS = {
   queue: '_veloPushQueue',
   config: '_veloConfig',
   pairedExtensions: '_veloPairedExtensions',
+  autoConnectFailAt: '_veloAutoConnectFailAt',
 } as const
 
 export const M3U8_MIME_TYPES = [
