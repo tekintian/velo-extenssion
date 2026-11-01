@@ -647,6 +647,39 @@
   "mse_detected_body": {
     "message": "该页面使用 MSE 流式播放，已记录分片指纹。可在面板中查看下载项。"
   },
+  "download_pushing": {
+    "message": "⏳ 已接管下载，正在发送到 $1$：$2$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      },
+      "2": {
+        "content": "$2"
+      }
+    }
+  },
+  "download_pushed_success": {
+    "message": "✓ 已发送到 $1$ 下载：$2$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      },
+      "2": {
+        "content": "$2"
+      }
+    }
+  },
+  "download_pushed_failed": {
+    "message": "✗ 推送到 $1$ 失败：$2$（请重试下载）",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      },
+      "2": {
+        "content": "$2"
+      }
+    }
+  },
   "options_test_input_title": {
     "message": "输入测试参数"
   },

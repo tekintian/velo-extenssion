@@ -114,6 +114,74 @@ const tabMediaMap = new Map<number, MediaItem[]>()
 const pushedUrlSet = new Set<string>()
 let lastPushedUrl = ''
 
+/** 下载推送状态载荷（background → content script 的 downloadPushed 消息） */
+interface DownloadPushPayload {
+  readonly status: 'pending' | 'success' | 'failed'
+  readonly fileName: string
+  readonly client: string
+  readonly message?: string | undefined
+}
+
+/**
+ * 推送结果回传给页面（顶层 frame）显示 toast
+ *
+ * 用户点击下载链接后请求被扩展接管，浏览器原生下载条目会被取消，
+ * 页面本身不会有任何变化。若没有页面级提示，用户无法判断下载是否已经开始。
+ * 这里把推送状态广播给发起页面的 content script（player-panel.content.ts），
+ * 由其渲染页面内 toast：
+ *   - pending: 已接管，正在发送到下载客户端
+ *   - success: 已成功发送
+ *   - failed:  发送失败
+ *
+ * 只发送到 frameId 0：player-panel 在所有 frame 注入，广播给所有 frame 会导致
+ * 每个 iframe 都弹一个 toast。
+ *
+ * 目标标签页可能在发送前已被关闭（`target="_blank"` 链接触发下载时，
+ * Chrome 会打开临时标签页、开始下载后立即关闭它）。因此先确认标签页存在，
+ * 不存在则回退到当前窗口的活动标签页（通常就是用户发起下载的那个页面）。
+ *
+ * @param tabId 目标标签页（发起下载的页面 / 弹窗的 opener 页面）
+ * @param payload 推送状态
+ */
+async function sendDownloadPushedMessage(
+  tabId: number,
+  payload: DownloadPushPayload,
+): Promise<void> {
+  const message = { type: 'downloadPushed', payload }
+  if (tabId >= 0) {
+    try {
+      await chrome.tabs.get(tabId)
+      chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch(() => {
+        // content script 未注入（页面尚未加载完 / 浏览器内部页）— 静默忽略
+      })
+      return
+    } catch {
+      // 标签页已关闭 — 走回退分支
+    }
+  }
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+    if (activeTab?.id != null) {
+      chrome.tabs.sendMessage(activeTab.id, message, { frameId: 0 }).catch(() => {})
+    }
+  } catch {
+    // 查询失败 — 忽略（页面提示为增强体验，不应影响下载推送主流程）
+  }
+}
+
+/**
+ * 推送结果回传给页面（顶层 frame）显示 toast（fire-and-forget 包装）
+ *
+ * @param tabId 目标标签页（发起下载的页面 / 弹窗的 opener 页面）
+ * @param payload 推送状态
+ */
+function notifyDownloadPushed(
+  tabId: number,
+  payload: DownloadPushPayload,
+): void {
+  void sendDownloadPushedMessage(tabId, payload).catch(() => {})
+}
+
 /** 最大保留数 */
 const MAX_PER_TAB = 100
 
@@ -569,6 +637,12 @@ export function startSniffer(): void {
             const pushRequestHeaders = pending.requestHeaders
             const pushTabId = pending.tabId
 
+            // === 页面级反馈所需上下文（提升到 IIFE 外层，供 .catch 分支复用） ===
+            // toastTabId: 最终接收页面提示的标签页（弹窗场景会切换为 opener）
+            let toastTabId = pushTabId
+            const toastFileName = pushFileName || pushUrl
+            const clientLabel = hasPushClient ? 'velo' : cfg.client
+
             void (async () => {
               let pageUrl: string | undefined
               let cookies: string | undefined
@@ -596,6 +670,8 @@ export function startSniffer(): void {
                     pageUrl = openerTab.url
                     title = openerTab.title
                   }
+                  // 弹窗标签页会被关闭，页面提示发到 opener（用户实际所在的页面）
+                  if (openerTab.id != null) toastTabId = openerTab.id
                   // NDM: B.test(b.g) && (chrome.tabs.remove(t[0].id), v["6"] = "media")
                   if (ext && MEDIA_EXT_RE.test(ext) && activeTab.id != null) {
                     chrome.tabs.remove(activeTab.id).catch(() => {})
@@ -604,6 +680,15 @@ export function startSniffer(): void {
                   }
                 }
               } catch { /* opener tab may not exist */ }
+
+              // 页面级反馈（第一阶段）：浏览器下载已被接管，立即告知用户正在发送，
+              // 避免用户点击后页面毫无变化、误以为下载没开始
+              notifyDownloadPushed(toastTabId, {
+                status: 'pending',
+                fileName: toastFileName,
+                client: clientLabel,
+              })
+
               try {
                 const cookieList = await chrome.cookies.getAll({ url: pushUrl })
                 if (cookieList.length > 0) {
@@ -645,12 +730,30 @@ export function startSniffer(): void {
                 pushedUrlSet.delete(pushUrl)
                 pushedUrlSet.delete(details.url)
                 logger.warn('[sniffer] auto-push failed, clearing lastPushedUrl:', result.message, 'url:', pushUrl.slice(0, 80))
+                notifyDownloadPushed(toastTabId, {
+                  status: 'failed',
+                  fileName: toastFileName,
+                  client: clientLabel,
+                  message: result.message,
+                })
+              } else {
+                notifyDownloadPushed(toastTabId, {
+                  status: 'success',
+                  fileName: toastFileName,
+                  client: clientLabel,
+                })
               }
             })().catch((e) => {
               lastPushedUrl = ''
               pushedUrlSet.delete(pushUrl)
               pushedUrlSet.delete(details.url)
               logger.warn('[sniffer] auto-push error, clearing lastPushedUrl:', (e as Error).message, 'url:', pushUrl.slice(0, 80))
+              notifyDownloadPushed(toastTabId, {
+                status: 'failed',
+                fileName: toastFileName,
+                client: clientLabel,
+                message: (e as Error).message,
+              })
             })
           } else {
             logger.info('[sniffer] non-media download, no client available, letting browser handle:', ext, pending.url.slice(0, 80))
@@ -1295,6 +1398,13 @@ function handleFtpOrFileRequest(
               cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
             }
           } catch { /* cookies API may fail */ }
+          const clientLabel = hasPushClient ? 'velo' : cfg.client
+          const toastFileName = fileName || details.url
+          notifyDownloadPushed(tabId, {
+            status: 'pending',
+            fileName: toastFileName,
+            client: clientLabel,
+          })
           const result = await sendToDownloadClient(
             details.url,
             fileName,
@@ -1304,11 +1414,29 @@ function handleFtpOrFileRequest(
             lastPushedUrl = ''
             pushedUrlSet.delete(details.url)
             logger.warn('[sniffer]', protocol, 'auto-push failed, clearing lastPushedUrl:', result.message)
+            notifyDownloadPushed(tabId, {
+              status: 'failed',
+              fileName: toastFileName,
+              client: clientLabel,
+              message: result.message,
+            })
+          } else {
+            notifyDownloadPushed(tabId, {
+              status: 'success',
+              fileName: toastFileName,
+              client: clientLabel,
+            })
           }
         })().catch((e: unknown) => {
           lastPushedUrl = ''
           pushedUrlSet.delete(details.url)
           logger.warn('[sniffer]', protocol, 'auto-push error, clearing lastPushedUrl:', (e as Error).message)
+          notifyDownloadPushed(tabId, {
+            status: 'failed',
+            fileName: fileName || details.url,
+            client: hasPushClient ? 'velo' : cfg.client,
+            message: (e as Error).message,
+          })
         })
       } else {
         logger.info('[sniffer]', protocol, 'non-media download, no client, letting browser handle:', ext, details.url.slice(0, 80))

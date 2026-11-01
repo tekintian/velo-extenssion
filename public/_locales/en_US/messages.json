@@ -647,6 +647,39 @@
   "mse_detected_body": {
     "message": "This page uses MSE streaming; segment fingerprints have been recorded. See the in-page panel for downloads."
   },
+  "download_pushing": {
+    "message": "⏳ Download intercepted, sending to $1$: $2$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      },
+      "2": {
+        "content": "$2"
+      }
+    }
+  },
+  "download_pushed_success": {
+    "message": "✓ Sent to $1$ for download: $2$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      },
+      "2": {
+        "content": "$2"
+      }
+    }
+  },
+  "download_pushed_failed": {
+    "message": "✗ Failed to push to $1$: $2$ (please retry the download)",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      },
+      "2": {
+        "content": "$2"
+      }
+    }
+  },
   "options_test_input_title": {
     "message": "Test Parameters"
   },

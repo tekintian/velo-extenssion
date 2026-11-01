@@ -41,6 +41,7 @@
 
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
+import { i18n } from '@/lib/i18n'
 import { extractItagFromUrl, resolveItagLabel } from '@/background/media/youtube-itags'
 import { sendMessage, sendMessageFireAndForget, onMessageAddListener } from '@/lib/runtime'
 
@@ -924,7 +925,15 @@ export default defineContentScript({
         report?: { ads?: number }
         url?: string
         visible?: boolean
-        payload?: { visible?: boolean; mimeType?: string; url?: string }
+        payload?: {
+          visible?: boolean
+          mimeType?: string
+          url?: string
+          status?: 'pending' | 'success' | 'failed'
+          fileName?: string
+          client?: string
+          message?: string
+        }
       }
 
       // SPA 路由变化 → 清空所有 panel，重新上报 pageUrl
@@ -958,6 +967,11 @@ export default defineContentScript({
       if (msg.type === 'mseMediaDetected') {
         const mt = msg.payload?.mimeType ?? ''
         showToast(`📡 检测到 MSE 流媒体 (${mt || 'unknown mime'})`, 'info')
+      }
+
+      // 非媒体下载被扩展接管 → 页面内下载状态提示（pending/success/failed）
+      if (msg.type === 'downloadPushed') {
+        showDownloadPushedToast(msg.payload)
       }
 
       // task #15: alert() 3 步排查引导
@@ -1086,8 +1100,16 @@ export default defineContentScript({
 
     /**
      * 页面内 toast 提示（保留旧实现）
+     *
+     * @param message 提示文案
+     * @param type 提示类型（决定背景色）
+     * @param durationMs 自动消失延迟（ms），<=0 表示常驻直到被下一次 toast 替换
      */
-    function showToast(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
+    function showToast(
+      message: string,
+      type: 'success' | 'error' | 'info' = 'info',
+      durationMs = 2500,
+    ): void {
       const existing = document.getElementById('__velo_toast__')
       if (existing) existing.remove()
       const toast = document.createElement('div')
@@ -1095,12 +1117,51 @@ export default defineContentScript({
       toast.textContent = message
       const bg = type === 'error' ? '#ef4444' : type === 'success' ? '#22c55e' : '#3b82f6'
       toast.style.cssText = `position:fixed;top:20px;right:20px;z-index:2147483647;padding:10px 16px;border-radius:6px;font-size:13px;color:#fff;background:${bg};box-shadow:0 4px 12px rgba(0,0,0,0.15);max-width:360px;word-break:break-word;opacity:0;transition:opacity 0.2s;font-family:system-ui,sans-serif;`
-      document.body.appendChild(toast)
+      // 页面可能在 document.body 尚未就绪时触发（document_start 注入），此时挂到 <html>
+      ;(document.body ?? document.documentElement).appendChild(toast)
       requestAnimationFrame(() => { toast.style.opacity = '1' })
-      setTimeout(() => {
-        toast.style.opacity = '0'
-        setTimeout(() => toast.remove(), 200)
-      }, 2500)
+      if (durationMs > 0) {
+        setTimeout(() => {
+          toast.style.opacity = '0'
+          setTimeout(() => toast.remove(), 200)
+        }, durationMs)
+      }
+    }
+
+    /**
+     * 非媒体下载接管提示（对齐 NDM 的下载状态反馈）
+     *
+     * 背景：用户点击下载链接后，请求被 sniffer 接管并推送桌面端，
+     * 浏览器原生下载条目被取消，页面本身毫无变化，用户无法判断下载是否开始。
+     * background 通过 downloadPushed 消息推送三阶段状态：
+     *   - pending: 已接管，正在发送到客户端（通常毫秒级后被 success/failed 替换，
+     *              10s 兜底超时防止 service worker 被回收导致提示常驻）
+     *   - success: 发送成功（4s 后自动消失）
+     *   - failed:  发送失败，浏览器原生下载已恢复（5s 后自动消失）
+     *
+     * @param payload 推送状态载荷
+     */
+    function showDownloadPushedToast(
+      payload: {
+        status?: 'pending' | 'success' | 'failed'
+        fileName?: string
+        client?: string
+        message?: string
+      } | undefined,
+    ): void {
+      if (!payload) return
+      const client = payload.client || 'velo'
+      const fileName = payload.fileName || ''
+      if (payload.status === 'pending') {
+        showToast(i18n('download_pushing', [client, fileName]), 'info', 10000)
+        return
+      }
+      if (payload.status === 'success') {
+        showToast(i18n('download_pushed_success', [client, fileName]), 'success', 4000)
+        return
+      }
+      const reason = payload.message ? ` — ${payload.message}` : ''
+      showToast(`${i18n('download_pushed_failed', [client, fileName])}${reason}`, 'error', 5000)
     }
 
     /**
