@@ -115,6 +115,10 @@ export interface Settings {
   downloadClient: 'aria2' | 'ndm' | 'velo' | 'native'
   rpcUrl: string
   rpcSecret: string
+  hlsRunMode: 'smart' | 'manual'
+  hlsLearnedSites: string[]
+  hlsEnabledSites: string[]
+  hlsDisabledSites: string[]
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -126,4 +130,8 @@ export const DEFAULT_SETTINGS: Settings = {
   downloadClient: 'velo',
   rpcUrl: 'http://127.0.0.1:16888/jsonrpc',
   rpcSecret: '',
+  hlsRunMode: 'smart',
+  hlsLearnedSites: [],
+  hlsEnabledSites: [],
+  hlsDisabledSites: [],
 }

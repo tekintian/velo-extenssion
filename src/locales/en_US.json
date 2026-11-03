@@ -146,6 +146,37 @@
   "popup_hls_detect": {
     "message": "HLS Ad Detection"
   },
+  "popup_hls_smart_mode": {
+    "message": "Smart mode"
+  },
+  "popup_hls_manual_mode": {
+    "message": "Manual mode"
+  },
+  "popup_hls_site_blocked": {
+    "message": "This site is disabled (blacklist)"
+  },
+  "popup_hls_site_inactive": {
+    "message": "HLS detection is not enabled on this site"
+  },
+  "popup_temp_enable_hls": {
+    "message": "Temporarily Enable HLS Detection"
+  },
+  "popup_temp_enable_success": {
+    "message": "Added $1$ to the enabled list; refresh the page to take effect",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_temp_enable_fail": {
+    "message": "Enable failed: $1$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
   "popup_ad_segments": {
     "message": "Ad segments"
   },
@@ -218,6 +249,71 @@
   },
   "options_hls_filter_desc": {
     "message": "Automatically detect and filter ad segments in m3u8 streams"
+  },
+  "options_hls_tab_general": {
+    "message": "General"
+  },
+  "options_hls_tab_fingerprint": {
+    "message": "Fingerprints"
+  },
+  "options_hls_tab_sites": {
+    "message": "Enabled Sites"
+  },
+  "options_hls_tab_disabled": {
+    "message": "Disabled Sites"
+  },
+  "options_hls_domain_hint": {
+    "message": "Enter a domain (e.g. vimeo.com); all of its subdomains will match as well"
+  },
+  "options_hls_run_mode_title": {
+    "message": "HLS Run Mode"
+  },
+  "options_hls_run_mode_desc": {
+    "message": "Smart mode enables HLS automatically on media sites detected in the background; Manual mode only enables it on the sites you maintain."
+  },
+  "options_hls_mode_smart": {
+    "message": "Smart"
+  },
+  "options_hls_mode_manual": {
+    "message": "Manual"
+  },
+  "options_hls_seeds_supplement": {
+    "message": "Supplement Built-in Seed Sites"
+  },
+  "options_seeds_supplemented": {
+    "message": "Added $1$ built-in seed sites",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "options_hls_learned_sites": {
+    "message": "Auto-learned Sites"
+  },
+  "options_hls_enabled_sites": {
+    "message": "Manually Enabled Sites"
+  },
+  "options_hls_disabled_sites": {
+    "message": "Disabled Sites (Blacklist)"
+  },
+  "options_hls_smart_desc": {
+    "message": "In smart mode, the current site is added to this list automatically when an m3u8 stream is detected. You can also add sites manually."
+  },
+  "options_hls_manual_desc": {
+    "message": "In manual mode, HLS ad filtering is enabled only on the sites listed below."
+  },
+  "options_hls_disabled_desc": {
+    "message": "The blacklist has the highest priority. HLS hooks are never enabled on these sites, even if they are auto-learned."
+  },
+  "options_hls_no_sites": {
+    "message": "No sites yet"
+  },
+  "options_hls_no_disabled": {
+    "message": "No disabled sites"
+  },
+  "options_add": {
+    "message": "Add"
   },
   "options_version_label": {
     "message": "Version"
@@ -316,7 +412,10 @@
     "message": "Ad Filter"
   },
   "options_threshold_label": {
-    "message": "Score Threshold (default 3)"
+    "message": "Score Threshold"
+  },
+  "options_threshold_desc": {
+    "message": "Default 3; ads are skipped only when the score reaches this threshold"
   },
   "options_enable_filter_label": {
     "message": "Enable ad segment filter"

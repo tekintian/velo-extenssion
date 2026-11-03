@@ -20,6 +20,8 @@ import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-f
 import { persistentStorage } from '@/lib/storage'
 import { settingsStore } from '@/lib/storage'
 import { DEFAULT_SETTINGS } from '@/types'
+import type { Settings } from '@/types'
+import { addLearnedSite, extractDomain, isInList } from '@/engine/hls/hls-sites'
 import {
   isYouTubePlayerApiPost,
   isVimeoPlayerJsonUrl,
@@ -816,6 +818,31 @@ export function startSniffer(): void {
         logger.info('[sniffer] media detected:', item.ext, item.fileName, 'ct:', item.contentType, 'size:', item.size, 'tabId:', item.tabId, item.url.slice(0, 100))
 
         if ((ext.toLowerCase() === 'm3u8' || ext.toLowerCase() === 'm3u') && pending.tabId >= 0) {
+          void (async () => {
+            try {
+              const stored = await settingsStore.get<Partial<Settings>>()
+              const fullSettings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+
+              if (fullSettings.hlsRunMode === 'smart' && fullSettings.enableHlsAdFilter) {
+                const tab = await chrome.tabs.get(pending.tabId).catch(() => null)
+                const pageHost = tab ? extractDomain(tab.url ?? '') : ''
+
+                if (pageHost) {
+                  if (!isInList(fullSettings.hlsDisabledSites, pageHost)) {
+                    if (!isInList(fullSettings.hlsLearnedSites, pageHost)) {
+                      const learned = await addLearnedSite(pageHost)
+                      if (learned) {
+                        logger.info('[hls-sites] auto-learned site:', pageHost)
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              logger.warn('[hls-sites] auto-learn failed:', (e as Error).message)
+            }
+          })()
+
           if (_m3u8ProcessHandler) {
             void _m3u8ProcessHandler(pending.url, pending.tabId, pending.requestHeaders)
           } else {

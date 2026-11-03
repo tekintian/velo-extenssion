@@ -146,6 +146,37 @@
   "popup_hls_detect": {
     "message": "HLS 广告检测"
   },
+  "popup_hls_smart_mode": {
+    "message": "智能模式"
+  },
+  "popup_hls_manual_mode": {
+    "message": "手动模式"
+  },
+  "popup_hls_site_blocked": {
+    "message": "该站点已被禁用（黑名单）"
+  },
+  "popup_hls_site_inactive": {
+    "message": "当前站点未启用 HLS 探测"
+  },
+  "popup_temp_enable_hls": {
+    "message": "临时启用 HLS 探测"
+  },
+  "popup_temp_enable_success": {
+    "message": "已将 $1$ 加入启用名单，刷新页面后生效",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "popup_temp_enable_fail": {
+    "message": "启用失败: $1$",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
   "popup_ad_segments": {
     "message": "广告分片"
   },
@@ -218,6 +249,71 @@
   },
   "options_hls_filter_desc": {
     "message": "开启后自动识别并过滤 m3u8 流媒体中的广告分片"
+  },
+  "options_hls_tab_general": {
+    "message": "基础设置"
+  },
+  "options_hls_tab_fingerprint": {
+    "message": "指纹库"
+  },
+  "options_hls_tab_sites": {
+    "message": "启用站点"
+  },
+  "options_hls_tab_disabled": {
+    "message": "禁用站点"
+  },
+  "options_hls_domain_hint": {
+    "message": "输入域名（如 vimeo.com），将同时匹配其所有子域名"
+  },
+  "options_hls_run_mode_title": {
+    "message": "HLS 运行模式"
+  },
+  "options_hls_run_mode_desc": {
+    "message": "智能模式下由后台自动识别媒体站点并按需启用；手动模式下仅在你维护的站点上启用。"
+  },
+  "options_hls_mode_smart": {
+    "message": "智能启用"
+  },
+  "options_hls_mode_manual": {
+    "message": "手动开启"
+  },
+  "options_hls_seeds_supplement": {
+    "message": "补全内置种子站点"
+  },
+  "options_seeds_supplemented": {
+    "message": "已补全 $1$ 个内置种子站点",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
+  },
+  "options_hls_learned_sites": {
+    "message": "自动学习站点"
+  },
+  "options_hls_enabled_sites": {
+    "message": "手动启用站点"
+  },
+  "options_hls_disabled_sites": {
+    "message": "禁用站点（黑名单）"
+  },
+  "options_hls_smart_desc": {
+    "message": "智能模式下，检测到 m3u8 媒体流时会自动将当前站点域名加入此列表，你也可以手动添加。"
+  },
+  "options_hls_manual_desc": {
+    "message": "手动模式下，仅以下列表中的站点会启用 HLS 广告过滤。"
+  },
+  "options_hls_disabled_desc": {
+    "message": "黑名单优先级最高，这些站点即使被自动学习到也不会启用 HLS hook。"
+  },
+  "options_hls_no_sites": {
+    "message": "暂无站点"
+  },
+  "options_hls_no_disabled": {
+    "message": "暂无禁用站点"
+  },
+  "options_add": {
+    "message": "添加"
   },
   "options_version_label": {
     "message": "版本"
@@ -316,7 +412,10 @@
     "message": "HLS广告过滤"
   },
   "options_threshold_label": {
-    "message": "评分阈值（默认 3）"
+    "message": "评分阈值"
+  },
+  "options_threshold_desc": {
+    "message": "默认 3，评分达到该阈值才判定为广告并跳过"
   },
   "options_enable_filter_label": {
     "message": "启用广告分片过滤"

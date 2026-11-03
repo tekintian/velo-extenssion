@@ -26,6 +26,12 @@ function Popup() {
   } | null>(null)
   const [dlClient, setDlClient] = useState<DlClient>('native')
   const [totalFiltered, setTotalFiltered] = useState(0)
+  const [hlsSiteStatus, setHlsSiteStatus] = useState<{
+    runMode: 'smart' | 'manual'
+    domain: string
+    isActive: boolean
+    isDisabled: boolean
+  } | null>(null)
   const [version] = useState(() => chrome.runtime.getManifest().version)
 
   const handleAutoConnect = useCallback(async () => {
@@ -61,9 +67,11 @@ function Popup() {
     const dl = await request<{ client?: string }>('getDownloadConfig')
     if (dl?.client) setDlClient(dl.client as DlClient)
 
+    let activePageUrl = ''
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
       const tabId = tabs[0]?.id ?? 0
+      activePageUrl = tabs[0]?.url ?? ''
       if (tabId > 0) {
         const r = await request<{
           report: { ads: number; total: number; adDuration: number }
@@ -75,6 +83,12 @@ function Popup() {
 
     const stats = await request<{ total?: { ads?: number } }>('getHlsStats')
     if (stats?.total?.ads) setTotalFiltered(stats.total.ads)
+
+    const siteSt = await request<{ runMode: 'smart' | 'manual'; domain: string; isActive: boolean; isDisabled: boolean }>(
+      'hlsGetSiteStatus',
+      { pageUrl: activePageUrl },
+    )
+    if (siteSt) setHlsSiteStatus(siteSt)
   }, [handleAutoConnect])
 
   useEffect(() => {
@@ -163,6 +177,40 @@ function Popup() {
     }
   }
 
+  async function handleTempEnableHls() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (!tab?.id || !tab.url) {
+      alert(i18n('popup_no_active_tab'))
+      return
+    }
+    const r = await request<{ ok?: boolean; domain?: string; error?: string }>(
+      'hlsTempEnableCurrentSite',
+      { pageUrl: tab.url },
+    )
+    if (!r?.ok) {
+      const err = r?.error
+      const msg =
+        err === 'site-blocked' ? i18n('popup_hls_site_blocked')
+        : err === 'no-page-domain' ? i18n('popup_no_active_tab')
+        : i18n('popup_temp_enable_fail', [err ?? i18n('popup_unknown_error')])
+      alert(msg)
+      return
+    }
+    setStatus(i18n('popup_temp_enable_success', [r.domain ?? '']))
+
+    try {
+      await chrome.tabs.sendMessage(tab.id, {
+        type: 'hlsDelegationChanged',
+        mode: 'active',
+        reason: 'temp-enable',
+      })
+    } catch {
+      // content script 尚未注入（如扩展刚安装），刷新页面后自动生效
+    }
+
+    setHlsSiteStatus((prev) => prev ? { ...prev, isActive: true } : prev)
+  }
+
   const openOptions = useCallback(() => {
     void chrome.runtime.openOptionsPage()
   }, [])
@@ -197,6 +245,23 @@ function Popup() {
             <span className="status-card-detail">{i18n('popup_filtered_count', [String(totalFiltered)])}</span>
           )}
         </div>
+        {hlsSiteStatus && (
+          <div className={`popup-status-card ${hlsSiteStatus.isActive ? 'status-ok' : hlsSiteStatus.isDisabled ? 'status-err' : 'status-warn'}`}>
+            <span className="status-card-label">
+              {hlsSiteStatus.runMode === 'smart' ? i18n('popup_hls_smart_mode') : i18n('popup_hls_manual_mode')}
+            </span>
+            <span className="status-card-value">
+              {hlsSiteStatus.isActive ? `🟢 ${i18n('popup_enabled')}`
+                : hlsSiteStatus.isDisabled ? `🚫 ${i18n('popup_hls_site_blocked')}`
+                : `⚪ ${i18n('popup_hls_site_inactive')}`}
+            </span>
+            {hlsSiteStatus.domain && (
+              <span className="status-card-detail" style={{ fontSize: '10px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+                {hlsSiteStatus.domain}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {detectInfo && (
@@ -245,6 +310,11 @@ function Popup() {
         <button className="btn-sample" onClick={() => void handleSampleSave()}>
           📋 {i18n('popup_hls_sample_save')}
         </button>
+        {hlsSiteStatus && !hlsSiteStatus.isActive && !hlsSiteStatus.isDisabled && (
+          <button className="btn-secondary" onClick={() => void handleTempEnableHls()}>
+            🎯 {i18n('popup_temp_enable_hls')}
+          </button>
+        )}
         {!paired && (
           <button className="btn-secondary" onClick={() => void handleAutoConnect()} disabled={probing}>
             {probing ? i18n('popup_probing') : i18n('popup_auto_connect_button')}

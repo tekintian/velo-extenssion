@@ -21,7 +21,7 @@ import { logger } from '@/lib/logger'
 import { extractBaseName, isBadName } from '@/lib/naming'
 import { persistentStorage, settingsStore } from '@/lib/storage'
 import type { BackupPayload } from '@/engine/hls/io'
-import { DEFAULT_SETTINGS } from '@/types'
+import { DEFAULT_SETTINGS, type Settings } from '@/types'
 import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
 import { consider, listPending, approve, dismiss } from '@/engine/hls/suggest'
 import { recordStats, getStats, clearStats } from '@/engine/hls/stats'
@@ -31,6 +31,15 @@ import { getLearnedCount, clearLearned } from '@/engine/hls/fingerprint'
 import { refreshRemoteRules, listAllRules } from '@/engine/hls/hls-rules'
 import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToVeloM3u8, materializeDataUrl, getPushClient, buildVeloHeaders } from '@/background/media/download-client'
 import { getMediaItems } from '@/background/media/sniffer'
+import {
+  addSite,
+  removeSite,
+  supplementSeedSites,
+  isHlsSite,
+  isInList,
+  extractDomain,
+  HLS_SITE_SEEDS,
+} from '@/engine/hls/hls-sites'
 
 /** per-tab 最近清洗后的 m3u8 上下文（供下载按钮用） */
 export interface CleanedContext {
@@ -671,6 +680,93 @@ export function registerHlsHandlers(): void {
     } catch (e) {
       return { ok: false as const, error: (e as Error).message }
     }
+  })
+
+  registerHandler('hlsGetRunMode', async () => {
+    const stored = await settingsStore.get<Partial<Settings>>()
+    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+    return {
+      runMode: settings.hlsRunMode,
+      learnedSites: settings.hlsLearnedSites,
+      enabledSites: settings.hlsEnabledSites,
+      disabledSites: settings.hlsDisabledSites,
+      seedCount: HLS_SITE_SEEDS.length,
+    }
+  })
+
+  registerHandler<{ runMode: 'smart' | 'manual' }>('hlsSetRunMode', async ({ payload }) => {
+    await settingsStore.set<Partial<Settings>>({ hlsRunMode: payload.runMode })
+    return { ok: true }
+  })
+
+  registerHandler<{ site: string; list: 'enabled' | 'disabled' | 'learned' }>('hlsAddSite', async ({ payload }) => {
+    const stored = await settingsStore.get<Partial<Settings>>()
+    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+    const targetList =
+      payload.list === 'enabled' ? settings.hlsEnabledSites
+      : payload.list === 'disabled' ? settings.hlsDisabledSites
+      : settings.hlsLearnedSites
+    const updated = addSite(targetList, payload.site)
+    const patch: Partial<Settings> = {}
+    if (payload.list === 'enabled') patch.hlsEnabledSites = updated
+    else if (payload.list === 'disabled') patch.hlsDisabledSites = updated
+    else patch.hlsLearnedSites = updated
+    await settingsStore.set(patch)
+    return { ok: true, sites: updated }
+  })
+
+  registerHandler<{ site: string; list: 'enabled' | 'disabled' | 'learned' }>('hlsRemoveSite', async ({ payload }) => {
+    const stored = await settingsStore.get<Partial<Settings>>()
+    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+    const targetList =
+      payload.list === 'enabled' ? settings.hlsEnabledSites
+      : payload.list === 'disabled' ? settings.hlsDisabledSites
+      : settings.hlsLearnedSites
+    const updated = removeSite(targetList, payload.site)
+    const patch: Partial<Settings> = {}
+    if (payload.list === 'enabled') patch.hlsEnabledSites = updated
+    else if (payload.list === 'disabled') patch.hlsDisabledSites = updated
+    else patch.hlsLearnedSites = updated
+    await settingsStore.set(patch)
+    return { ok: true, sites: updated }
+  })
+
+  registerHandler<{ runMode: 'smart' | 'manual' }>('hlsSupplementSeeds', async ({ payload }) => {
+    const result = await supplementSeedSites(payload.runMode)
+    return { ok: true, added: result.added }
+  })
+
+  registerHandler<{ pageUrl?: string }>('hlsGetSiteStatus', async (message, sender) => {
+    const stored = await settingsStore.get<Partial<Settings>>()
+    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+    const pageUrl = message.payload?.pageUrl || sender.tab?.url || ''
+    const domain = extractDomain(pageUrl)
+    if (!domain) {
+      return { runMode: settings.hlsRunMode, domain: '', isActive: false, isDisabled: false }
+    }
+    const isDisabled = isInList(settings.hlsDisabledSites, domain)
+    const isActive = isHlsSite(domain, settings)
+    return { runMode: settings.hlsRunMode, domain, isActive, isDisabled }
+  })
+
+  registerHandler<{ pageUrl?: string }>('hlsTempEnableCurrentSite', async (message, sender) => {
+    const stored = await settingsStore.get<Partial<Settings>>()
+    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+    const pageUrl = message.payload?.pageUrl || sender.tab?.url || ''
+    const domain = extractDomain(pageUrl)
+    if (!domain) return { ok: false, error: 'no-page-domain' }
+    if (isInList(settings.hlsDisabledSites, domain)) {
+      return { ok: false, error: 'site-blocked' }
+    }
+
+    const patch: Partial<Settings> = {}
+    if (settings.hlsRunMode === 'smart') {
+      patch.hlsLearnedSites = addSite(settings.hlsLearnedSites, domain)
+    } else {
+      patch.hlsEnabledSites = addSite(settings.hlsEnabledSites, domain)
+    }
+    await settingsStore.set(patch)
+    return { ok: true, domain, runMode: settings.hlsRunMode }
   })
 }
 
