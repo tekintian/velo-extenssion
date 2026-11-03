@@ -86,7 +86,46 @@
     "message": "未检测到 Velo 客户端，请确认已启动"
   },
   "popup_desktop_client": {
-    "message": "桌面端"
+    "message": "客户端连接"
+  },
+  "popup_client_direct_mode": {
+    "message": "直连模式"
+  },
+  "popup_client_browser_download": {
+    "message": "浏览器下载"
+  },
+  "popup_hls_filter_disabled": {
+    "message": "过滤已关闭"
+  },
+  "popup_hls_filter_disabled_desc": {
+    "message": "总开关已在设置中关闭"
+  },
+  "popup_hls_site_blocked_desc": {
+    "message": "已加入黑名单，不参与过滤"
+  },
+  "popup_hls_filter_idle": {
+    "message": "未生效"
+  },
+  "popup_hls_site_probe_on": {
+    "message": "HLS 探测中"
+  },
+  "popup_error_site_inactive": {
+    "message": "当前站点未启用 HLS 探测，请先点击「临时启用 HLS 探测」并刷新页面"
+  },
+  "popup_hls_settings_entry": {
+    "message": "HLS 广告过滤设置"
+  },
+  "popup_error_no_m3u8_context": {
+    "message": "该标签页暂无 m3u8 上下文，请先在页面播放视频或刷新后重试"
+  },
+  "popup_error_sample_out_of_range": {
+    "message": "样本序号超出范围"
+  },
+  "popup_hls_mode_only_enabled_sites": {
+    "message": "仅启用站点"
+  },
+  "popup_hls_mode_auto_detect": {
+    "message": "自动识别站点"
   },
   "popup_ad_filter": {
     "message": "HLS广告过滤"
@@ -472,6 +511,12 @@
   },
   "options_enable_ad_skip": {
     "message": "自动跳过广告（播放时自动 seek 跳过广告分片）"
+  },
+  "options_enable_hls_filter": {
+    "message": "HLS 广告分片过滤"
+  },
+  "options_enable_hls_filter_desc": {
+    "message": "关闭后不再清洗 m3u8 广告分片，页面视频按原样播放"
   },
   "options_show_page_badge": {
     "message": "显示页面角标（在视频旁显示已过滤广告数）"

@@ -46,6 +46,14 @@ export default defineConfig({
 
   modules: ['@wxt-dev/module-react'],
 
+  dev: {
+    server: {
+      port: 3000,
+      strictPort: true,
+      origin: 'http://localhost:3000',
+    },
+  },
+
   webExt: {
     binaries: {
       chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',

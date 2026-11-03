@@ -19,19 +19,17 @@ function Popup() {
   const [port, setPort] = useState(16888)
   const [status, setStatus] = useState('')
 
-  const [hlsEnabled, setHlsEnabled] = useState(true)
+  const [filterEnabled, setFilterEnabled] = useState(true)
   const [detectInfo, setDetectInfo] = useState<{
     report: { ads: number; total: number; adDuration: number }
     baseUrl: string
   } | null>(null)
   const [dlClient, setDlClient] = useState<DlClient>('native')
   const [totalFiltered, setTotalFiltered] = useState(0)
-  const [hlsSiteStatus, setHlsSiteStatus] = useState<{
-    runMode: 'smart' | 'manual'
-    domain: string
-    isActive: boolean
-    isDisabled: boolean
-  } | null>(null)
+  const [runMode, setRunMode] = useState<'smart' | 'manual'>('smart')
+  const [siteDomain, setSiteDomain] = useState('')
+  const [siteActive, setSiteActive] = useState(false)
+  const [siteBlocked, setSiteBlocked] = useState(false)
   const [version] = useState(() => chrome.runtime.getManifest().version)
 
   const handleAutoConnect = useCallback(async () => {
@@ -61,8 +59,8 @@ function Popup() {
       if (!st.paired) void handleAutoConnect()
     }
 
-    const full = await request<{ enableAdSkip?: boolean }>('getHlsFullConfig')
-    if (full) setHlsEnabled(full.enableAdSkip ?? true)
+    const full = await request<{ enableHlsAdFilter?: boolean }>('getHlsFullConfig')
+    if (full) setFilterEnabled(full.enableHlsAdFilter ?? true)
 
     const dl = await request<{ client?: string }>('getDownloadConfig')
     if (dl?.client) setDlClient(dl.client as DlClient)
@@ -88,7 +86,12 @@ function Popup() {
       'hlsGetSiteStatus',
       { pageUrl: activePageUrl },
     )
-    if (siteSt) setHlsSiteStatus(siteSt)
+    if (siteSt) {
+      setRunMode(siteSt.runMode)
+      setSiteDomain(siteSt.domain)
+      setSiteActive(siteSt.isActive)
+      setSiteBlocked(siteSt.isDisabled)
+    }
   }, [handleAutoConnect])
 
   useEffect(() => {
@@ -105,11 +108,9 @@ function Popup() {
     setStatus('')
   }, [])
 
-  async function handleHlsToggle(v: boolean) {
-    setHlsEnabled(v)
-    const r = await request('setHlsFullConfig', { enableAdSkip: v })
-    if (!r) setHlsEnabled(!v)
-  }
+  const openHlsFilterOptions = useCallback(() => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL('options-hls-filter.html') })
+  }, [])
 
   async function handleDownloadCleanM3u8() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -166,14 +167,20 @@ function Popup() {
       alert(i18n('popup_playback_read_fail') + ': ' + (pb?.error || i18n('popup_play_video_first')))
       return
     }
-    const r = await request<{ success?: boolean; error?: string }>('captureSample', {
+    const r = await request<{ ok?: boolean; error?: string }>('captureSample', {
       tabId: tab.id,
       currentTime: pb.currentTime ?? 0,
     })
-    if (r?.success) {
+    if (r?.ok) {
       alert(i18n('popup_sample_saved', [String(Math.round(pb.currentTime ?? 0))]))
     } else {
-      alert(i18n('popup_capture_fail', [r?.error ?? i18n('popup_unknown_error')]))
+      const err = r?.error
+      const msg =
+        err === 'site-inactive' ? i18n('popup_error_site_inactive')
+        : err === 'no-m3u8-context' ? i18n('popup_error_no_m3u8_context')
+        : err === 'sample-out-of-range' ? i18n('popup_error_sample_out_of_range')
+        : i18n('popup_capture_fail', [err ?? i18n('popup_unknown_error')])
+      alert(msg)
     }
   }
 
@@ -208,12 +215,38 @@ function Popup() {
       // content script 尚未注入（如扩展刚安装），刷新页面后自动生效
     }
 
-    setHlsSiteStatus((prev) => prev ? { ...prev, isActive: true } : prev)
+    setSiteActive(true)
   }
 
   const openOptions = useCallback(() => {
     void chrome.runtime.openOptionsPage()
   }, [])
+
+  const clientConnected = dlClient !== 'velo' || paired
+
+  const filterEffective = filterEnabled && siteActive
+
+  const filterCardClass = !filterEnabled
+    ? 'status-warn'
+    : siteBlocked ? 'status-err' : filterEffective ? 'status-ok' : 'status-warn'
+
+  const filterCardLabel = !filterEnabled ? i18n('popup_hls_filter_disabled')
+    : siteBlocked ? i18n('popup_hls_site_blocked')
+    : filterEffective ? i18n('popup_enabled')
+    : i18n('popup_hls_filter_idle')
+
+  const filterCardDetail = !filterEnabled ? i18n('popup_hls_filter_disabled_desc')
+    : siteBlocked ? i18n('popup_hls_site_blocked_desc')
+    : filterEffective ? (totalFiltered > 0 ? i18n('popup_filtered_count', [String(totalFiltered)]) : undefined)
+    : i18n('popup_hls_site_inactive')
+
+  const siteCardLabel = runMode === 'smart'
+    ? `${i18n('popup_hls_smart_mode')}（${i18n('popup_hls_mode_auto_detect')}）`
+    : `${i18n('popup_hls_manual_mode')}（${i18n('popup_hls_mode_only_enabled_sites')}）`
+
+  const siteCardValue = siteActive ? `🟢 ${i18n('popup_hls_site_probe_on')}`
+    : siteBlocked ? `🚫 ${i18n('popup_hls_site_blocked')}`
+    : `⚪ ${i18n('popup_hls_site_inactive')}`
 
   return (
     <div className="popup-container">
@@ -229,37 +262,34 @@ function Popup() {
       </header>
 
       <div className="popup-status-row">
-        <div className={`popup-status-card ${paired ? 'status-ok' : 'status-err'}`}>
+        <div className={`popup-status-card ${clientConnected ? 'status-ok' : paired ? 'status-err' : 'status-warn'}`}>
           <span className="status-card-label">{i18n('popup_desktop_client')}</span>
           <span className="status-card-value">
-            {paired ? `✅ ${i18n('popup_connected')}` : `❌ ${i18n('popup_not_paired')}`}
+            {dlClient === 'velo'
+              ? paired ? `✅ ${i18n('popup_connected')}` : `❌ ${i18n('popup_not_paired')}`
+              : dlClient === 'native'
+                ? `🌐 ${i18n('popup_client_browser_download')}`
+                : `⚪ ${i18n('popup_client_direct_mode')}`}
           </span>
-          {paired && <span className="status-card-detail">port {port}</span>}
+          <span className="status-card-detail">
+            {dlClient === 'velo' ? `${DL_CLIENT_LABELS[dlClient]} · port ${port}`
+              : dlClient === 'aria2' ? DL_CLIENT_LABELS[dlClient]
+              : dlClient === 'ndm' ? `${DL_CLIENT_LABELS[dlClient]} · port ${port}`
+              : i18n('popup_client_browser_download')}
+          </span>
         </div>
-        <div className={`popup-status-card ${hlsEnabled ? 'status-ok' : 'status-err'}`}>
+        <div className={`popup-status-card ${filterCardClass}`}>
           <span className="status-card-label">{i18n('popup_ad_filter')}</span>
-          <span className="status-card-value">
-            {hlsEnabled ? `🟢 ${i18n('popup_enabled')}` : `⚪ ${i18n('popup_disabled')}`}
-          </span>
-          {hlsEnabled && totalFiltered > 0 && (
-            <span className="status-card-detail">{i18n('popup_filtered_count', [String(totalFiltered)])}</span>
-          )}
+          <span className="status-card-value">{filterCardLabel}</span>
+          {filterCardDetail && <span className="status-card-detail">{filterCardDetail}</span>}
         </div>
-        {hlsSiteStatus && (
-          <div className={`popup-status-card ${hlsSiteStatus.isActive ? 'status-ok' : hlsSiteStatus.isDisabled ? 'status-err' : 'status-warn'}`}>
-            <span className="status-card-label">
-              {hlsSiteStatus.runMode === 'smart' ? i18n('popup_hls_smart_mode') : i18n('popup_hls_manual_mode')}
+        {siteDomain && (
+          <div className={`popup-status-card ${siteActive ? 'status-ok' : siteBlocked ? 'status-err' : 'status-warn'}`}>
+            <span className="status-card-label">{siteCardLabel}</span>
+            <span className="status-card-value">{siteCardValue}</span>
+            <span className="status-card-detail" style={{ fontSize: '10px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+              {siteDomain}
             </span>
-            <span className="status-card-value">
-              {hlsSiteStatus.isActive ? `🟢 ${i18n('popup_enabled')}`
-                : hlsSiteStatus.isDisabled ? `🚫 ${i18n('popup_hls_site_blocked')}`
-                : `⚪ ${i18n('popup_hls_site_inactive')}`}
-            </span>
-            {hlsSiteStatus.domain && (
-              <span className="status-card-detail" style={{ fontSize: '10px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                {hlsSiteStatus.domain}
-              </span>
-            )}
           </div>
         )}
       </div>
@@ -290,37 +320,28 @@ function Popup() {
       )}
 
       <div className="popup-section">
-        <div className="popup-switch-row">
-          <div className="popup-switch-info">
-            <div className="popup-switch-label">{i18n('popup_hls_ad_filter')}</div>
-            <div className="popup-switch-desc">{i18n('popup_hls_ad_filter_desc')}</div>
-          </div>
-          <label className="popup-toggle">
-            <input
-              type="checkbox"
-              checked={hlsEnabled}
-              onChange={(e) => void handleHlsToggle(e.target.checked)}
-            />
-            <span className="popup-toggle-slider" />
-          </label>
-        </div>
+        <button className="btn-secondary" onClick={openHlsFilterOptions} style={{ width: '100%' }}>
+          ⚙️ {i18n('popup_hls_settings_entry')}
+        </button>
       </div>
 
       <div className="popup-actions">
-        <button className="btn-sample" onClick={() => void handleSampleSave()}>
-          📋 {i18n('popup_hls_sample_save')}
-        </button>
-        {hlsSiteStatus && !hlsSiteStatus.isActive && !hlsSiteStatus.isDisabled && (
+        {siteActive && (
+          <button className="btn-sample" onClick={() => void handleSampleSave()}>
+            📋 {i18n('popup_hls_sample_save')}
+          </button>
+        )}
+        {siteDomain && !siteActive && !siteBlocked && (
           <button className="btn-secondary" onClick={() => void handleTempEnableHls()}>
             🎯 {i18n('popup_temp_enable_hls')}
           </button>
         )}
-        {!paired && (
+        {dlClient === 'velo' && !paired && (
           <button className="btn-secondary" onClick={() => void handleAutoConnect()} disabled={probing}>
             {probing ? i18n('popup_probing') : i18n('popup_auto_connect_button')}
           </button>
         )}
-        {paired && (
+        {dlClient === 'velo' && paired && (
           <button className="btn-ghost" onClick={handleClearPairing}>
             {i18n('popup_repair_button')}
           </button>

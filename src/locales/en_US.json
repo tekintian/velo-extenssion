@@ -86,7 +86,46 @@
     "message": "Velo client not detected, please make sure it is running"
   },
   "popup_desktop_client": {
-    "message": "Desktop"
+    "message": "Client Connection"
+  },
+  "popup_client_direct_mode": {
+    "message": "Direct mode"
+  },
+  "popup_client_browser_download": {
+    "message": "Browser download"
+  },
+  "popup_hls_filter_disabled": {
+    "message": "Filter off"
+  },
+  "popup_hls_filter_disabled_desc": {
+    "message": "Master switch is turned off in settings"
+  },
+  "popup_hls_site_blocked_desc": {
+    "message": "Blocklisted, excluded from filtering"
+  },
+  "popup_hls_filter_idle": {
+    "message": "Not active"
+  },
+  "popup_hls_site_probe_on": {
+    "message": "Probing HLS"
+  },
+  "popup_error_site_inactive": {
+    "message": "HLS probing is not enabled for this site. Use \"Temporarily enable HLS probing\" and reload the page"
+  },
+  "popup_hls_settings_entry": {
+    "message": "HLS Ad Filter Settings"
+  },
+  "popup_error_no_m3u8_context": {
+    "message": "No m3u8 context for this tab yet. Play the video or reload the page and retry"
+  },
+  "popup_error_sample_out_of_range": {
+    "message": "Sample index out of range"
+  },
+  "popup_hls_mode_only_enabled_sites": {
+    "message": "enabled sites only"
+  },
+  "popup_hls_mode_auto_detect": {
+    "message": "auto-detect sites"
   },
   "popup_ad_filter": {
     "message": "Ad Filter"
@@ -472,6 +511,12 @@
   },
   "options_enable_ad_skip": {
     "message": "Auto-skip ads (seek past ad segments during playback)"
+  },
+  "options_enable_hls_filter": {
+    "message": "HLS Ad Segment Filter"
+  },
+  "options_enable_hls_filter_desc": {
+    "message": "When off, m3u8 playlists are no longer cleaned and videos play unmodified"
   },
   "options_show_page_badge": {
     "message": "Show page badge (display filtered ad count near video)"

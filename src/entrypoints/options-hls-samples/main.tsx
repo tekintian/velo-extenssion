@@ -34,11 +34,18 @@ function SamplesPage() {
       const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' }) as
         { ok?: boolean; currentTime?: number; error?: string } | undefined
       if (!pb?.ok) throw new Error(i18n('options_playback_read_fail') + ': ' + (pb?.error || '?'))
-      const result = await request<{ success?: boolean; message?: string; error?: string }>('captureSample', {
+      const result = await request<{ ok?: boolean; error?: string }>('captureSample', {
         tabId: tab.id,
         currentTime: pb.currentTime ?? 0,
       })
-      if (!result?.success) throw new Error(i18n('popup_capture_fail', [result?.message || result?.error || '?']))
+      if (!result?.ok) {
+        const err = result?.error
+        const msg =
+          err === 'no-m3u8-context' ? i18n('popup_error_no_m3u8_context')
+          : err === 'sample-out-of-range' ? i18n('popup_error_sample_out_of_range')
+          : i18n('popup_capture_fail', [err ?? '?'])
+        throw new Error(msg)
+      }
       alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime ?? 0)}s)`)
       void loadSamples()
     } catch (e) { alert(String(e)) }

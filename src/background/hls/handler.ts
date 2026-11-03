@@ -257,22 +257,30 @@ export function registerHlsHandlers(): void {
     return { success: true as const }
   })
 
-  registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message) => {
+  registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message, sender) => {
     const { tabId, currentTime } = message.payload
+    const stored = await settingsStore.get<Partial<Settings>>()
+    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+    const pageHost = extractDomain(sender.tab?.url ?? '')
+    if (settings.hlsRunMode === 'smart' && pageHost && !isHlsSite(pageHost, settings)) {
+      return { ok: false as const, error: 'site-inactive' }
+    }
     const ctx = await loadCleanedContext(tabId)
     if (!ctx || !ctx.segments || ctx.segments.length === 0) {
-      throw new Error('该标签页无最近 m3u8 上下文（先在页面触发一次视频检测/下载，或刷新页面后重试）')
+      return { ok: false as const, error: 'no-m3u8-context' }
     }
+    let sample
     try {
-      const sample = captureSample(ctx.segments, currentTime, ctx.pageHost, ctx.baseUrl, ctx.report, ctx.reasons)
-      if (!sample) throw new Error('捕获失败（currentTime 超出分片范围）')
-      await recordSample(sample)
-      const learned = await autoLearnFromSample(sample)
-      logger.info('[hls] sample captured + auto-learned', learned, 'fingerprints')
-      return { success: true as const }
+      sample = captureSample(ctx.segments, currentTime, ctx.pageHost, ctx.baseUrl, ctx.report, ctx.reasons)
     } catch (e) {
-      throw new Error((e as Error).message)
+      logger.warn('[hls] captureSample failed:', (e as Error).message)
+      return { ok: false as const, error: 'capture-failed' }
     }
+    if (!sample) return { ok: false as const, error: 'sample-out-of-range' }
+    await recordSample(sample)
+    const learned = await autoLearnFromSample(sample)
+    logger.info('[hls] sample captured + auto-learned', learned, 'fingerprints')
+    return { ok: true as const }
   })
 
   // === 阶段 3: 统计 ===
@@ -330,7 +338,9 @@ export function registerHlsHandlers(): void {
   // === 全部配置 ===
   registerHandler('getHlsFullConfig', async () => {
     const cfg = (await persistentStorage.get<Record<string, unknown>>('hlsFilterConfig')) ?? {}
+    const stored = await settingsStore.get<Partial<Settings>>()
     return {
+      enableHlsAdFilter: stored?.enableHlsAdFilter ?? DEFAULT_SETTINGS.enableHlsAdFilter,
       enableAdSkip: (cfg.enableAdSkip as boolean) ?? true,
       showPageBadge: (cfg.showPageBadge as boolean) ?? true,
       keepDiscontinuityOnGap: (cfg.keepDiscontinuityOnGap as boolean) ?? true,
@@ -340,6 +350,13 @@ export function registerHlsHandlers(): void {
       urlPatterns: (cfg.urlPatterns as string[]) ?? [],
       remoteRulesUrl: (cfg.remoteRulesUrl as string) ?? '',
     }
+  })
+
+  registerHandler<{ enabled: boolean }>('setHlsAdFilterEnabled', async (message) => {
+    const stored = await settingsStore.get<Partial<Settings>>()
+    await settingsStore.set({ ...stored, enableHlsAdFilter: message.payload.enabled })
+    logger.info('[hls] ad filter enabled:', message.payload.enabled)
+    return { success: true as const }
   })
 
   registerHandler<Record<string, unknown>>('setHlsFullConfig', async (message) => {

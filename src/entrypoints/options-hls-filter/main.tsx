@@ -47,6 +47,8 @@ function HlsFilterPage() {
     scoreThreshold: number
   }>({ enableAdSkip: true, showPageBadge: true, keepDiscontinuityOnGap: true, logToConsole: false, scoreThreshold: 3 })
 
+  const [filterEnabled, setFilterEnabled] = useState(false)
+
   const [saved, setSaved] = useState(false)
   const [stats, setStats] = useState<HlsStats | null>(null)
 
@@ -79,6 +81,7 @@ function HlsFilterPage() {
     }
 
     const full = await request<{
+      enableHlsAdFilter?: boolean
       enableAdSkip?: boolean
       showPageBadge?: boolean
       keepDiscontinuityOnGap?: boolean
@@ -86,6 +89,7 @@ function HlsFilterPage() {
       scoreThreshold?: number
     }>('getHlsFullConfig')
     if (full) {
+      setFilterEnabled(full.enableHlsAdFilter ?? false)
       setFullConfig({
         enableAdSkip: full.enableAdSkip ?? true,
         showPageBadge: full.showPageBadge ?? true,
@@ -124,6 +128,12 @@ function HlsFilterPage() {
     }
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  async function handleFilterToggle(v: boolean) {
+    setFilterEnabled(v)
+    const r = await request('setHlsAdFilterEnabled', { enabled: v })
+    if (!r) setFilterEnabled(!v)
   }
 
   async function handleRunModeChange(mode: 'smart' | 'manual') {
@@ -252,39 +262,65 @@ function HlsFilterPage() {
               <label className="switch-row">
                 <input
                   type="checkbox"
-                  checked={fullConfig.enableAdSkip}
-                  onChange={(e) => setFullConfig({ ...fullConfig, enableAdSkip: e.target.checked })}
+                  checked={filterEnabled}
+                  onChange={(e) => void handleFilterToggle(e.target.checked)}
                 />
                 <span className="switch-slider" />
               </label>
               <div className="switch-info">
-                <span className="switch-label">{i18n('options_enable_ad_skip')}</span>
-                <span className="switch-hint">{i18n('options_enable_filter_label')}</span>
+                <span className="switch-label">{i18n('options_enable_hls_filter')}</span>
+                <span className="switch-hint">{i18n('options_enable_hls_filter_desc')}</span>
               </div>
             </div>
 
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eee' }}>
-              <label
-                style={{
-                  display: 'flex',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  marginBottom: 0,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <span>{i18n('options_threshold_label')}：</span>
-                <input
-                  type="number"
-                  value={fullConfig.scoreThreshold}
-                  onChange={(e) => setFullConfig({ ...fullConfig, scoreThreshold: Number(e.target.value) })}
-                  min={0}
-                  max={10}
-                  style={{ width: 72, flex: '0 0 auto', padding: '6px 8px', border: '1px solid #ccc', borderRadius: 4 }}
-                />
-                <span className="switch-hint">{i18n('options_threshold_desc')}</span>
-              </label>
+            <div
+              style={{
+                marginTop: 16,
+                paddingTop: 16,
+                borderTop: '1px solid #eee',
+                opacity: filterEnabled ? 1 : 0.5,
+              }}
+            >
+              <div className="config-global-switch">
+                <label className="switch-row">
+                  <input
+                    type="checkbox"
+                    checked={fullConfig.enableAdSkip}
+                    disabled={!filterEnabled}
+                    onChange={(e) => setFullConfig({ ...fullConfig, enableAdSkip: e.target.checked })}
+                  />
+                  <span className="switch-slider" />
+                </label>
+                <div className="switch-info">
+                  <span className="switch-label">{i18n('options_enable_ad_skip')}</span>
+                  <span className="switch-hint">{i18n('options_enable_filter_label')}</span>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 0,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <span>{i18n('options_threshold_label')}：</span>
+                  <input
+                    type="number"
+                    value={fullConfig.scoreThreshold}
+                    disabled={!filterEnabled}
+                    onChange={(e) => setFullConfig({ ...fullConfig, scoreThreshold: Number(e.target.value) })}
+                    min={0}
+                    max={10}
+                    style={{ width: 72, flex: '0 0 auto', padding: '6px 8px', border: '1px solid #ccc', borderRadius: 4 }}
+                  />
+                  <span className="switch-hint">{i18n('options_threshold_desc')}</span>
+                </label>
+              </div>
             </div>
           </section>
 
