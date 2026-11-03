@@ -297,7 +297,12 @@ function HlsFilterPage() {
                 </div>
               </div>
 
-              <div style={{ marginTop: 16 }}>
+              <div style={{
+                marginTop: 16,
+                paddingTop: 16,
+                borderTop: '1px solid #eee',
+                opacity: filterEnabled ? 1 : 0.5,
+              }} >
                 <label
                   style={{
                     display: 'flex',

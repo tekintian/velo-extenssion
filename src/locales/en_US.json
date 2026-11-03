@@ -83,7 +83,12 @@
     }
   },
   "popup_client_not_found": {
-    "message": "Velo client not detected, please make sure it is running"
+    "message": "$1$ client not detected, please make sure it is running",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
   },
   "popup_desktop_client": {
     "message": "Client Connection"
@@ -114,6 +119,21 @@
   },
   "popup_hls_settings_entry": {
     "message": "HLS Ad Filter Settings"
+  },
+  "popup_hls_settings_short": {
+    "message": "Filter Settings"
+  },
+  "popup_open_settings_short": {
+    "message": "Full Settings"
+  },
+  "popup_enable_site_detect": {
+    "message": "Enable Site Detect"
+  },
+  "popup_hls_site_detect": {
+    "message": "Site HLS Detect"
+  },
+  "popup_hls_filter_no_record": {
+    "message": "No records yet"
   },
   "popup_error_no_m3u8_context": {
     "message": "No m3u8 context for this tab yet. Play the video or reload the page and retry"

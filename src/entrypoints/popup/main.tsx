@@ -13,6 +13,13 @@ const DL_CLIENT_LABELS: Record<DlClient, string> = {
   velo: 'Velo',
 }
 
+const DL_CLIENT_HOMEPAGES: Record<DlClient, string> = {
+  native: 'https://www.google.com/chrome/',
+  aria2: 'https://motrix.app/download/',
+  ndm: 'https://neatdownloadmanager.com/',
+  velo: 'https://velo.tekin.cn',
+}
+
 function Popup() {
   const [paired, setPaired] = useState(false)
   const [probing, setProbing] = useState(false)
@@ -25,11 +32,12 @@ function Popup() {
     baseUrl: string
   } | null>(null)
   const [dlClient, setDlClient] = useState<DlClient>('native')
-  const [totalFiltered, setTotalFiltered] = useState(0)
+  const [siteAds, setSiteAds] = useState(0)
   const [runMode, setRunMode] = useState<'smart' | 'manual'>('smart')
   const [siteDomain, setSiteDomain] = useState('')
   const [siteActive, setSiteActive] = useState(false)
   const [siteBlocked, setSiteBlocked] = useState(false)
+  const [siteEnabled, setSiteEnabled] = useState(false)
   const [version] = useState(() => chrome.runtime.getManifest().version)
 
   const handleAutoConnect = useCallback(async () => {
@@ -41,7 +49,7 @@ function Popup() {
       if (resp.port) setPort(resp.port)
       setStatus('')
     } else {
-      setStatus(i18n('popup_client_not_found'))
+      setStatus(i18n('popup_client_not_found', [DL_CLIENT_LABELS.velo]))
     }
     setProbing(false)
   }, [])
@@ -64,7 +72,6 @@ function Popup() {
 
     const dl = await request<{ client?: string }>('getDownloadConfig')
     if (dl?.client) setDlClient(dl.client as DlClient)
-
     let activePageUrl = ''
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -79,10 +86,16 @@ function Popup() {
       }
     } catch { /* ignore */ }
 
-    const stats = await request<{ total?: { ads?: number } }>('getHlsStats')
-    if (stats?.total?.ads) setTotalFiltered(stats.total.ads)
-
-    const siteSt = await request<{ runMode: 'smart' | 'manual'; domain: string; isActive: boolean; isDisabled: boolean }>(
+    const siteSt = await request<{
+      runMode: 'smart' | 'manual'
+      domain: string
+      isActive: boolean
+      isDisabled: boolean
+      extensionEnabled?: boolean
+      filterEnabled?: boolean
+      siteEnabled?: boolean
+      siteAds?: number
+    }>(
       'hlsGetSiteStatus',
       { pageUrl: activePageUrl },
     )
@@ -91,6 +104,9 @@ function Popup() {
       setSiteDomain(siteSt.domain)
       setSiteActive(siteSt.isActive)
       setSiteBlocked(siteSt.isDisabled)
+      setSiteEnabled(siteSt.siteEnabled ?? false)
+      setSiteAds(siteSt.siteAds ?? 0)
+      if (typeof siteSt.filterEnabled === 'boolean') setFilterEnabled(siteSt.filterEnabled)
     }
   }, [handleAutoConnect])
 
@@ -215,6 +231,7 @@ function Popup() {
       // content script 尚未注入（如扩展刚安装），刷新页面后自动生效
     }
 
+    setSiteEnabled(true)
     setSiteActive(true)
   }
 
@@ -224,29 +241,28 @@ function Popup() {
 
   const clientConnected = dlClient !== 'velo' || paired
 
-  const filterEffective = filterEnabled && siteActive
+  const clientValue = dlClient === 'velo'
+    ? paired ? `✅ ${i18n('popup_connected')}` : `❌ ${i18n('popup_not_paired')}`
+    : dlClient === 'native'
+      ? `🌐 ${i18n('popup_client_browser_download')}`
+      : `⚪ ${i18n('popup_client_direct_mode')}`
 
-  const filterCardClass = !filterEnabled
-    ? 'status-warn'
-    : siteBlocked ? 'status-err' : filterEffective ? 'status-ok' : 'status-warn'
+  const clientDetail = dlClient === 'velo' ? `${DL_CLIENT_LABELS[dlClient]} · port ${port}`
+    : dlClient === 'aria2' ? DL_CLIENT_LABELS[dlClient]
+    : dlClient === 'ndm' ? `${DL_CLIENT_LABELS[dlClient]} · port ${port}`
+    : i18n('popup_client_browser_download')
 
-  const filterCardLabel = !filterEnabled ? i18n('popup_hls_filter_disabled')
-    : siteBlocked ? i18n('popup_hls_site_blocked')
-    : filterEffective ? i18n('popup_enabled')
-    : i18n('popup_hls_filter_idle')
+  const hlsActive = siteActive && !siteBlocked
 
   const filterCardDetail = !filterEnabled ? i18n('popup_hls_filter_disabled_desc')
-    : siteBlocked ? i18n('popup_hls_site_blocked_desc')
-    : filterEffective ? (totalFiltered > 0 ? i18n('popup_filtered_count', [String(totalFiltered)]) : undefined)
-    : i18n('popup_hls_site_inactive')
+    : siteAds > 0 ? i18n('popup_filtered_count', [String(siteAds)])
+    : i18n('popup_hls_filter_no_record')
 
-  const siteCardLabel = runMode === 'smart'
-    ? `${i18n('popup_hls_smart_mode')}（${i18n('popup_hls_mode_auto_detect')}）`
-    : `${i18n('popup_hls_manual_mode')}（${i18n('popup_hls_mode_only_enabled_sites')}）`
-
-  const siteCardValue = siteActive ? `🟢 ${i18n('popup_hls_site_probe_on')}`
-    : siteBlocked ? `🚫 ${i18n('popup_hls_site_blocked')}`
+  const siteCardValue = siteBlocked ? `🚫 ${i18n('popup_hls_site_blocked')}`
+    : siteActive ? `🟢 ${i18n('popup_hls_site_probe_on')}`
     : `⚪ ${i18n('popup_hls_site_inactive')}`
+
+  const canTempEnable = !siteEnabled && !siteBlocked
 
   return (
     <div className="popup-container">
@@ -261,38 +277,35 @@ function Popup() {
         </button>
       </header>
 
-      <div className="popup-status-row">
-        <div className={`popup-status-card ${clientConnected ? 'status-ok' : paired ? 'status-err' : 'status-warn'}`}>
-          <span className="status-card-label">{i18n('popup_desktop_client')}</span>
-          <span className="status-card-value">
-            {dlClient === 'velo'
-              ? paired ? `✅ ${i18n('popup_connected')}` : `❌ ${i18n('popup_not_paired')}`
-              : dlClient === 'native'
-                ? `🌐 ${i18n('popup_client_browser_download')}`
-                : `⚪ ${i18n('popup_client_direct_mode')}`}
-          </span>
-          <span className="status-card-detail">
-            {dlClient === 'velo' ? `${DL_CLIENT_LABELS[dlClient]} · port ${port}`
-              : dlClient === 'aria2' ? DL_CLIENT_LABELS[dlClient]
-              : dlClient === 'ndm' ? `${DL_CLIENT_LABELS[dlClient]} · port ${port}`
-              : i18n('popup_client_browser_download')}
-          </span>
-        </div>
-        <div className={`popup-status-card ${filterCardClass}`}>
-          <span className="status-card-label">{i18n('popup_ad_filter')}</span>
-          <span className="status-card-value">{filterCardLabel}</span>
-          {filterCardDetail && <span className="status-card-detail">{filterCardDetail}</span>}
-        </div>
-        {siteDomain && (
-          <div className={`popup-status-card ${siteActive ? 'status-ok' : siteBlocked ? 'status-err' : 'status-warn'}`}>
-            <span className="status-card-label">{siteCardLabel}</span>
-            <span className="status-card-value">{siteCardValue}</span>
-            <span className="status-card-detail" style={{ fontSize: '10px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-              {siteDomain}
-            </span>
-          </div>
-        )}
+      <div className={`popup-client-bar ${clientConnected ? 'status-ok' : paired ? 'status-err' : 'status-warn'}`}>
+        <span className="status-card-label">{i18n('popup_desktop_client')}</span>
+        <span className="status-card-value">{clientValue}</span>
+        <span className="status-card-detail">{clientDetail}</span>
       </div>
+
+      {hlsActive && (
+        <div className="popup-group">
+          <div className="popup-group-title">
+            {runMode === 'smart'
+              ? `${i18n('popup_hls_smart_mode')}（${i18n('popup_hls_mode_auto_detect')}）`
+              : `${i18n('popup_hls_manual_mode')}（${i18n('popup_hls_mode_only_enabled_sites')}）`}
+          </div>
+          <div className="popup-group-grid">
+            <div className={`popup-status-card ${filterEnabled ? 'status-ok' : 'status-warn'}`}>
+              <span className="status-card-label">{i18n('popup_ad_filter')}</span>
+              <span className="status-card-value">
+                {filterEnabled ? `🟢 ${i18n('popup_enabled')}` : `⚪ ${i18n('popup_hls_filter_disabled')}`}
+              </span>
+              <span className="status-card-detail">{filterCardDetail}</span>
+            </div>
+            <div className="popup-status-card status-ok">
+              <span className="status-card-label">{i18n('popup_hls_site_detect')}</span>
+              <span className="status-card-value">{siteCardValue}</span>
+              <span className="status-card-detail ellipsis">{siteDomain}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detectInfo && (
         <div className="popup-detect-card">
@@ -319,23 +332,7 @@ function Popup() {
         </div>
       )}
 
-      <div className="popup-section">
-        <button className="btn-secondary" onClick={openHlsFilterOptions} style={{ width: '100%' }}>
-          ⚙️ {i18n('popup_hls_settings_entry')}
-        </button>
-      </div>
-
       <div className="popup-actions">
-        {siteActive && (
-          <button className="btn-sample" onClick={() => void handleSampleSave()}>
-            📋 {i18n('popup_hls_sample_save')}
-          </button>
-        )}
-        {siteDomain && !siteActive && !siteBlocked && (
-          <button className="btn-secondary" onClick={() => void handleTempEnableHls()}>
-            🎯 {i18n('popup_temp_enable_hls')}
-          </button>
-        )}
         {dlClient === 'velo' && !paired && (
           <button className="btn-secondary" onClick={() => void handleAutoConnect()} disabled={probing}>
             {probing ? i18n('popup_probing') : i18n('popup_auto_connect_button')}
@@ -346,17 +343,40 @@ function Popup() {
             {i18n('popup_repair_button')}
           </button>
         )}
+        {canTempEnable && siteDomain && (
+          <button className="btn-secondary" onClick={() => void handleTempEnableHls()}>
+            🎯 {i18n('popup_enable_site_detect')}
+          </button>
+        )}
+        {siteActive && (
+          <button className="btn-sample" onClick={() => void handleSampleSave()}>
+            📋 {i18n('popup_hls_sample_save')}
+          </button>
+        )}
       </div>
 
       {status && <p className="popup-message">{status}</p>}
 
       <div className="popup-footer">
-        <span className="popup-dl-client">
-          {i18n('popup_download_client')}: {DL_CLIENT_LABELS[dlClient]}
-        </span>
-        <button className="popup-open-options" onClick={openOptions}>
-          ↗ {i18n('popup_open_settings')}
-        </button>
+        <div className="popup-footer-tools">
+          <span className="popup-dl-client">
+            {i18n('popup_download_client')}:{' '}
+            <a
+              className="popup-dl-link"
+              href={DL_CLIENT_HOMEPAGES[dlClient]}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {DL_CLIENT_LABELS[dlClient]}
+            </a>
+          </span>
+          <button className="popup-tool-icon" onClick={openHlsFilterOptions} title={i18n('popup_hls_settings_short')}>
+            🛡️
+          </button>
+          <button className="popup-tool-icon" onClick={openOptions} title={i18n('popup_open_settings_short')}>
+            ⚙️
+          </button>
+        </div>
       </div>
     </div>
   )

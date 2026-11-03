@@ -21,7 +21,7 @@ import { persistentStorage } from '@/lib/storage'
 import { settingsStore } from '@/lib/storage'
 import { DEFAULT_SETTINGS } from '@/types'
 import type { Settings } from '@/types'
-import { addLearnedSite, extractDomain, isInList } from '@/engine/hls/hls-sites'
+import { addLearnedSite, extractDomain, isHlsSite, isInList } from '@/engine/hls/hls-sites'
 import {
   isYouTubePlayerApiPost,
   isVimeoPlayerJsonUrl,
@@ -820,23 +820,21 @@ export function startSniffer(): void {
         if ((ext.toLowerCase() === 'm3u8' || ext.toLowerCase() === 'm3u') && pending.tabId >= 0) {
           void (async () => {
             try {
-              const stored = await settingsStore.get<Partial<Settings>>()
-              const fullSettings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+              const tab = await chrome.tabs.get(pending.tabId).catch(() => null)
+              const pageHost = tab ? extractDomain(tab.url ?? '') : ''
+              if (!pageHost) return
 
-              if (fullSettings.hlsRunMode === 'smart' && fullSettings.enableHlsAdFilter) {
-                const tab = await chrome.tabs.get(pending.tabId).catch(() => null)
-                const pageHost = tab ? extractDomain(tab.url ?? '') : ''
+              const delegation = await resolveHlsDelegation(tab?.url ?? '')
+              const autoLearn = delegation.runMode === 'smart'
+                && delegation.extensionEnabled
+                && delegation.filterEnabled
+                && !delegation.siteBlocked
+              if (!autoLearn) return
 
-                if (pageHost) {
-                  if (!isInList(fullSettings.hlsDisabledSites, pageHost)) {
-                    if (!isInList(fullSettings.hlsLearnedSites, pageHost)) {
-                      const learned = await addLearnedSite(pageHost)
-                      if (learned) {
-                        logger.info('[hls-sites] auto-learned site:', pageHost)
-                      }
-                    }
-                  }
-                }
+              const learnedSites = (await settingsStore.get<Partial<Settings>>())?.hlsLearnedSites ?? []
+              if (!isInList(learnedSites, pageHost)) {
+                const learned = await addLearnedSite(pageHost)
+                if (learned) logger.info('[hls-sites] auto-learned site:', pageHost)
               }
             } catch (e) {
               logger.warn('[hls-sites] auto-learn failed:', (e as Error).message)
@@ -1946,6 +1944,53 @@ export function pairDashItems(tabId: number): DashPair[] {
   }
 
   return pairs
+}
+
+export interface HlsDelegation {
+  readonly active: boolean
+  readonly extensionEnabled: boolean
+  readonly filterEnabled: boolean
+  readonly siteEnabled: boolean
+  readonly siteBlocked: boolean
+  readonly runMode: 'smart' | 'manual'
+  readonly domain: string
+  readonly reason: 'extension-disabled' | 'hls-filter-disabled' | 'site-not-allowed' | undefined
+}
+
+export async function resolveHlsDelegation(pageUrl: string): Promise<HlsDelegation> {
+  const stored = await settingsStore.get<Partial<Settings>>()
+  const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
+  const domain = extractDomain(pageUrl)
+  const siteBlocked = isInList(settings.hlsDisabledSites, domain)
+  const siteEnabled = isHlsSite(domain, settings)
+
+  const globalCfg = await persistentStorage.get<{ enabled?: boolean }>('extensionGlobalConfig')
+  const extensionEnabled = globalCfg?.enabled ?? true
+  const filterEnabled = settings.enableHlsAdFilter
+
+  let reason: HlsDelegation['reason']
+  let active = true
+  if (!extensionEnabled) {
+    active = false
+    reason = 'extension-disabled'
+  } else if (!filterEnabled) {
+    active = false
+    reason = 'hls-filter-disabled'
+  } else if (domain && !siteEnabled) {
+    active = false
+    reason = 'site-not-allowed'
+  }
+
+  return {
+    active,
+    extensionEnabled,
+    filterEnabled,
+    siteEnabled,
+    siteBlocked,
+    runMode: settings.hlsRunMode,
+    domain,
+    reason,
+  }
 }
 
 /**

@@ -83,7 +83,12 @@
     }
   },
   "popup_client_not_found": {
-    "message": "未检测到 Velo 客户端，请确认已启动"
+    "message": "未检测到 $1$ 客户端，请确认已启动",
+    "placeholders": {
+      "1": {
+        "content": "$1"
+      }
+    }
   },
   "popup_desktop_client": {
     "message": "客户端连接"
@@ -114,6 +119,21 @@
   },
   "popup_hls_settings_entry": {
     "message": "HLS 广告过滤设置"
+  },
+  "popup_hls_settings_short": {
+    "message": "过滤设置"
+  },
+  "popup_open_settings_short": {
+    "message": "完整设置"
+  },
+  "popup_enable_site_detect": {
+    "message": "启用本站探测"
+  },
+  "popup_hls_site_detect": {
+    "message": "本站 HLS 探测"
+  },
+  "popup_hls_filter_no_record": {
+    "message": "暂无过滤记录"
   },
   "popup_error_no_m3u8_context": {
     "message": "该标签页暂无 m3u8 上下文，请先在页面播放视频或刷新后重试"

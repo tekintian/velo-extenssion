@@ -75,6 +75,56 @@ body {
   background: var(--muted-bg);
 }
 
+.popup-client-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.popup-client-bar.status-ok {
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+}
+
+.popup-client-bar.status-err {
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+}
+
+.popup-client-bar.status-warn {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+}
+
+.popup-client-bar .status-card-detail {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popup-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.popup-group-title {
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+
+.popup-group-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .popup-status-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -88,6 +138,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .popup-status-card.status-ok {
@@ -98,6 +149,11 @@ body {
 .popup-status-card.status-err {
   background: #fff2f0;
   border: 1px solid #ffccc7;
+}
+
+.popup-status-card.status-warn {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
 }
 
 .status-card-label {
@@ -113,6 +169,14 @@ body {
 .status-card-detail {
   font-size: 11px;
   color: var(--muted-fg);
+}
+
+.status-card-detail.ellipsis {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
 }
 
 .popup-message {
@@ -341,8 +405,30 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--border);
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popup-footer-tools {
+  display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+}
+
+.popup-tool-icon {
+  margin-left: auto;
+  padding: 2px 6px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.popup-tool-icon:hover {
+  background: #f0f7ff;
 }
 
 .popup-dl-client {
@@ -350,14 +436,11 @@ body {
   color: var(--muted-fg);
 }
 
-.popup-open-options {
-  background: none;
-  border: none;
+.popup-dl-link {
   color: var(--color-primary);
-  cursor: pointer;
-  font-size: 12px;
+  text-decoration: none;
 }
 
-.popup-open-options:hover {
+.popup-dl-link:hover {
   text-decoration: underline;
 }

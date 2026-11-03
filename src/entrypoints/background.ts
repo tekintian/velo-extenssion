@@ -4,7 +4,7 @@ import { i18n } from '@/lib/i18n'
 import { initMessageRouter, registerHandler } from '@/background/messaging/router'
 import { PairingManager, type ProbeResult } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
-import { startSniffer, setM3u8ProcessHandler, getMediaItems } from '@/background/media/sniffer'
+import { startSniffer, setM3u8ProcessHandler, getMediaItems, resolveHlsDelegation } from '@/background/media/sniffer'
 import { setPushClient, pushHls, pushUrl, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig, getCachedDownloadConfig } from '@/background/media/download-client'
 import type { DownloadClientConfig } from '@/background/media/types'
 import { registerMediaHandlers } from '@/background/media/handler'
@@ -15,11 +15,10 @@ import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
 import { migrateAdFilterKeys } from '@engine/shared/storage'
 import { recordStats } from '@/engine/hls/stats'
 import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, STORAGE_KEYS, type VeloConfig } from '@/types'
-import { DEFAULT_SETTINGS } from '@/types'
 import { configStore, persistentStorage, settingsStore } from '@/lib/storage'
 import type { MediaDescriptor, Settings } from '@/types'
 import { extractBaseName } from '@/lib/naming'
-import { initSeedSitesIfNeeded, isHlsSite, extractDomain } from '@/engine/hls/hls-sites'
+import { initSeedSitesIfNeeded } from '@/engine/hls/hls-sites'
 
 export default defineBackground({
   type: 'module',
@@ -60,29 +59,9 @@ function registerHandlers(): void {
   // P0-5: HLS 委派状态查询 — hls-bridge.content.ts 启动时调用，决定 MAIN world 是否安装 fetch/XHR hook
   // 返回 'active' 表示扩展接管页面 m3u8 过滤
   registerHandler('getHlsDelegation', async (_message, sender) => {
-    try {
-      const stored = await settingsStore.get<Partial<Settings>>()
-      const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
-
-      const globalCfg = await persistentStorage.get<{ enabled?: boolean }>('extensionGlobalConfig')
-      if (globalCfg?.enabled === false) {
-        return { mode: 'delegated' as const, reason: 'extension-disabled' }
-      }
-
-      if (!settings.enableHlsAdFilter) {
-        return { mode: 'delegated' as const, reason: 'hls-filter-disabled' }
-      }
-
-      const pageUrl = sender.tab?.url ?? ''
-      const domain = extractDomain(pageUrl)
-      if (domain && !isHlsSite(domain, settings)) {
-        return { mode: 'delegated' as const, reason: 'site-not-allowed' }
-      }
-
-      return { mode: 'active' as const, reason: undefined }
-    } catch {
-      return { mode: 'active' as const, reason: 'error-fallback' }
-    }
+    const pageUrl = sender.tab?.url ?? ''
+    const { active, reason } = await resolveHlsDelegation(pageUrl)
+    return { mode: active ? ('active' as const) : ('delegated' as const), reason }
   })
 
   registerHandler('velo-get-status', async () => {

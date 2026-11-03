@@ -30,12 +30,11 @@ import { buildExport, applyImport } from '@/engine/hls/io'
 import { getLearnedCount, clearLearned } from '@/engine/hls/fingerprint'
 import { refreshRemoteRules, listAllRules } from '@/engine/hls/hls-rules'
 import { getDownloadConfig, sendToAria2, sendToNative, sendToNdm, sendToVeloM3u8, materializeDataUrl, getPushClient, buildVeloHeaders } from '@/background/media/download-client'
-import { getMediaItems } from '@/background/media/sniffer'
+import { getMediaItems, resolveHlsDelegation } from '@/background/media/sniffer'
 import {
   addSite,
   removeSite,
   supplementSeedSites,
-  isHlsSite,
   isInList,
   extractDomain,
   HLS_SITE_SEEDS,
@@ -259,10 +258,8 @@ export function registerHlsHandlers(): void {
 
   registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message, sender) => {
     const { tabId, currentTime } = message.payload
-    const stored = await settingsStore.get<Partial<Settings>>()
-    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
-    const pageHost = extractDomain(sender.tab?.url ?? '')
-    if (settings.hlsRunMode === 'smart' && pageHost && !isHlsSite(pageHost, settings)) {
+    const delegation = await resolveHlsDelegation(sender.tab?.url ?? '')
+    if (!delegation.active) {
       return { ok: false as const, error: 'site-inactive' }
     }
     const ctx = await loadCleanedContext(tabId)
@@ -754,16 +751,21 @@ export function registerHlsHandlers(): void {
   })
 
   registerHandler<{ pageUrl?: string }>('hlsGetSiteStatus', async (message, sender) => {
-    const stored = await settingsStore.get<Partial<Settings>>()
-    const settings: Settings = { ...DEFAULT_SETTINGS, ...stored }
     const pageUrl = message.payload?.pageUrl || sender.tab?.url || ''
-    const domain = extractDomain(pageUrl)
-    if (!domain) {
-      return { runMode: settings.hlsRunMode, domain: '', isActive: false, isDisabled: false }
+    const d = await resolveHlsDelegation(pageUrl)
+    const stats = await getStats()
+    const siteAds = d.domain ? (stats.byHost[d.domain]?.ads ?? 0) : 0
+    return {
+      runMode: d.runMode,
+      domain: d.domain,
+      isActive: d.active,
+      isDisabled: d.siteBlocked,
+      extensionEnabled: d.extensionEnabled,
+      filterEnabled: d.filterEnabled,
+      siteEnabled: d.siteEnabled,
+      reason: d.reason,
+      siteAds,
     }
-    const isDisabled = isInList(settings.hlsDisabledSites, domain)
-    const isActive = isHlsSite(domain, settings)
-    return { runMode: settings.hlsRunMode, domain, isActive, isDisabled }
   })
 
   registerHandler<{ pageUrl?: string }>('hlsTempEnableCurrentSite', async (message, sender) => {
