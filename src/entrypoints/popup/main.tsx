@@ -2,6 +2,7 @@ import { mountReact } from '@/lib/mount'
 import { useState, useEffect, useCallback } from 'react'
 import { i18n } from '@/lib/i18n'
 import { request, requestArray } from '@/lib/messaging'
+import { queryPlayback } from '@/lib/playback'
 import '@/assets/popup.css'
 
 type DlClient = 'ndm' | 'aria2' | 'velo' | 'native'
@@ -180,23 +181,17 @@ function Popup() {
       alert(i18n('popup_no_active_tab'))
       return
     }
-    let pb: { ok?: boolean; currentTime?: number; error?: string } | undefined
-    try {
-      pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' }) as
-        { ok?: boolean; currentTime?: number; error?: string } | undefined
-    } catch {
-      pb = { ok: false, error: 'content script not available' }
-    }
-    if (!pb?.ok) {
-      alert(i18n('popup_playback_read_fail') + ': ' + (pb?.error || i18n('popup_play_video_first')))
+    const pb = await queryPlayback(tab.id)
+    if (!pb.ok) {
+      alert(i18n('popup_playback_read_fail') + ': ' + (pb.error || i18n('popup_play_video_first')))
       return
     }
     const r = await request<{ ok?: boolean; error?: string }>('captureSample', {
       tabId: tab.id,
-      currentTime: pb.currentTime ?? 0,
+      currentTime: pb.currentTime,
     })
     if (r?.ok) {
-      alert(i18n('popup_sample_saved', [String(Math.round(pb.currentTime ?? 0))]))
+      alert(i18n('popup_sample_saved', [String(Math.round(pb.currentTime))]))
     } else {
       const err = r?.error
       const msg =

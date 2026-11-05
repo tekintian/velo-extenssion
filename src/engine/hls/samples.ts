@@ -43,6 +43,28 @@ export interface AdSample {
 }
 
 /**
+ * 读取指定分片索引的命中理由
+ *
+ * `reasons` 在工程内存在两种序列化形态：
+ *   - Record<number, string[]> —— processPlaylist 直接产出、持久化时原样落盘
+ *   - Array<{ index, reasons }> —— 经过 testM3u8 / 消息 JSON 序列化后的形态
+ * 这里统一归一化，避免样本 signals 因形态差异静默丢失。
+ */
+function readSignals(reasons: SampleReasons | undefined, index: number): string[] {
+  if (!reasons) return []
+  if (Array.isArray(reasons)) {
+    const hit = (reasons as ReadonlyArray<{ index: number; reasons: string[] }>).find((r) => r?.index === index)
+    return Array.isArray(hit?.reasons) ? hit.reasons : []
+  }
+  return (reasons as Record<number, string[]>)[index] ?? []
+}
+
+/** 分片命中理由的两种可能形态 */
+type SampleReasons =
+  | Record<number, string[]>
+  | ReadonlyArray<{ index: number; reasons: string[] }>
+
+/**
  * 在 segments 里找 currentTime 对应的分片索引
  */
 export function findSegIndexAtTime(segments: readonly Segment[], currentTime: number): number {
@@ -64,7 +86,7 @@ export function findSegIndexAtTime(segments: readonly Segment[], currentTime: nu
  * @param pageHost     页面 host
  * @param baseUrl      m3u8 URL
  * @param report       AdFilter report（含 appliedRule）
- * @param reasons      AdFilter reasons（segIdx→[理由]）
+ * @param reasons      AdFilter reasons（分片索引→命中理由，支持 Record 与数组两种形态）
  * @param N            前后窗口大小，默认 3
  */
 export function captureSample(
@@ -73,7 +95,7 @@ export function captureSample(
   pageHost: string,
   baseUrl: string,
   report: { ads: number; total: number; adDuration: number; appliedRule?: { id: string; name: string } | null } | null,
-  reasons: Record<number, string[]> | undefined,
+  reasons: SampleReasons | undefined,
   N = DEFAULT_WINDOW,
 ): AdSample | null {
   const cur = findSegIndexAtTime(segments, currentTime)
@@ -90,7 +112,7 @@ export function captureSample(
       discontinuity: s.discontinuity,
       seqNum: s.seqNum,
       isCurrent: i === cur,
-      signals: reasons?.[s.index] ?? [],
+      signals: readSignals(reasons, s.index),
     })
   }
   return {

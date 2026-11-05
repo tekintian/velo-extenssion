@@ -302,9 +302,21 @@ export function registerHlsHandlers(): void {
     return { success: true as const }
   })
 
-  registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message, sender) => {
+  registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message) => {
     const { tabId, currentTime } = message.payload
-    const delegation = await resolveHlsDelegation(sender.tab?.url ?? '')
+    // 站点判定必须用「实际播放页面」的 URL：popup 场景 sender.tab 虽存在，
+    // 但 options 页面调用时 sender.tab 为 undefined，会把正常播放的页面
+    // 误判成 site-inactive；此外多 tab 场景 sender.tab 未必等于 tabId 对应页。
+    let pageUrl = ''
+    try {
+      pageUrl = (await chrome.tabs.get(tabId)).url ?? ''
+    } catch (e) {
+      logger.warn('[hls] captureSample: tab lookup failed, tabId:', tabId, (e as Error).message)
+    }
+    if (!pageUrl) {
+      return { ok: false as const, error: 'no-m3u8-context' }
+    }
+    const delegation = await resolveHlsDelegation(pageUrl)
     if (!delegation.active) {
       return { ok: false as const, error: 'site-inactive' }
     }

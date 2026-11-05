@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { i18n } from '@/lib/i18n'
 import { request, requestArray } from '@/lib/messaging'
+import { queryPlayback } from '@/lib/playback'
 import '@/assets/options.css'
 
 interface SampleItem {
@@ -31,22 +32,22 @@ function SamplesPage() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) throw new Error(i18n('options_no_active_tab'))
-      const pb = await chrome.tabs.sendMessage(tab.id, { type: 'getPlayback' }) as
-        { ok?: boolean; currentTime?: number; error?: string } | undefined
-      if (!pb?.ok) throw new Error(i18n('options_playback_read_fail') + ': ' + (pb?.error || '?'))
+      const pb = await queryPlayback(tab.id)
+      if (!pb.ok) throw new Error(i18n('options_playback_read_fail') + ': ' + (pb.error || i18n('popup_play_video_first')))
       const result = await request<{ ok?: boolean; error?: string }>('captureSample', {
         tabId: tab.id,
-        currentTime: pb.currentTime ?? 0,
+        currentTime: pb.currentTime,
       })
       if (!result?.ok) {
         const err = result?.error
         const msg =
           err === 'no-m3u8-context' ? i18n('popup_error_no_m3u8_context')
           : err === 'sample-out-of-range' ? i18n('popup_error_sample_out_of_range')
-          : i18n('popup_capture_fail', [err ?? '?'])
+          : err === 'site-inactive' ? i18n('popup_error_site_inactive')
+          : i18n('popup_capture_fail', [err ?? i18n('popup_unknown_error')])
         throw new Error(msg)
       }
-      alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime ?? 0)}s)`)
+      alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime)}s)`)
       void loadSamples()
     } catch (e) { alert(String(e)) }
   }

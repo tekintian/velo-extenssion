@@ -169,15 +169,21 @@ export default defineContentScript({
         }
         return false
       }
-      // 响应 popup 的播放状态查询（保存广告样本时需要 currentTime）
+      // 响应 popup / options 的播放状态查询（保存广告样本时需要 currentTime）
       if (msg.type === 'getPlayback') {
         const v = findVideo()
         if (v) {
-          sendResponse({ ok: true, currentTime: v.currentTime || 0, duration: v.duration || 0, src: v.currentSrc || v.src || '' })
+          sendResponse({
+            ok: true,
+            currentTime: v.currentTime || 0,
+            duration: Number.isFinite(v.duration) ? v.duration : 0,
+            src: v.currentSrc || v.src || '',
+          })
         } else {
-          sendResponse({ ok: false, error: i18n('options_no_video_element') ?? 'No video element found' })
+          sendResponse({ ok: false, error: i18n('options_no_video_element') })
         }
-        return true // 异步 sendResponse
+        // 同步响应，无需保持消息通道
+        return false
       }
       return false
     })
@@ -263,19 +269,15 @@ export default defineContentScript({
     }
 
     function findVideo(): HTMLVideoElement | null {
-      let v = document.querySelector('video')
-      if (!v) {
-        const ifs = document.querySelectorAll('iframe')
-        for (const f of ifs) {
-          try {
-            v = (f.contentDocument?.querySelector('video') as HTMLVideoElement) ?? null
-            if (v) break
-          } catch {
-            // cross-origin
-          }
+      const candidates = collectVideos(document)
+      for (const f of Array.from(document.querySelectorAll('iframe'))) {
+        try {
+          candidates.push(...collectVideos(f.contentDocument))
+        } catch {
+          // cross-origin iframe — 由该 iframe 自身的 content script 响应
         }
       }
-      return v
+      return pickBestVideo(candidates)
     }
 
     function attachSkipper(video: HTMLVideoElement): void {
@@ -525,6 +527,52 @@ interface SkipRange {
   readonly duration: number
 }
 
+/**
+ * 收集文档内全部 video 元素
+ *
+ * 播放器常把 video 放在 shadow root 内（自定义元素封装），普通
+ * querySelector('video') 无法穿透。这里对已声明的 open shadow root 递归收集。
+ */
+function collectVideos(root: Document | ShadowRoot | null): HTMLVideoElement[] {
+  if (!root) return []
+  const out: HTMLVideoElement[] = []
+  for (const v of Array.from(root.querySelectorAll('video') ?? [])) {
+    out.push(v)
+  }
+  for (const el of Array.from(root.querySelectorAll('*') ?? [])) {
+    const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot
+    if (shadow) out.push(...collectVideos(shadow))
+  }
+  return out
+}
+
+/**
+ * 从候选 video 中选出真正的播放器元素
+ *
+ * 页面里常存在多个 video（广告位、预加载占位、隐藏播放器）。评分规则：
+ *   1. 正在播放（!paused 且 readyState >= HAVE_CURRENT_DATA）最高优先
+ *   2. 已有有效时长（duration 非 NaN）次之
+ *   3. 可见面积最大者优先（排除 display:none / 0 尺寸占位）
+ */
+function pickBestVideo(candidates: readonly HTMLVideoElement[]): HTMLVideoElement | null {
+  if (candidates.length === 0) return null
+  let best: HTMLVideoElement | null = null
+  let bestScore = -1
+  for (const v of candidates) {
+    let score = 0
+    if (v.readyState >= 2) score += 4
+    if (Number.isFinite(v.duration) && v.duration > 0) score += 2
+    if (!v.paused && !v.ended) score += 1
+    const rect = v.getBoundingClientRect()
+    if (rect.width > 0 && rect.height > 0) score += 1
+    if (score > bestScore) {
+      best = v
+      bestScore = score
+    }
+  }
+  return best
+}
+
 function runAdSkipInFrame(): void {
   let ranges: SkipRange[] = []
   let skipping = false
@@ -536,17 +584,15 @@ function runAdSkipInFrame(): void {
   }
 
   function findFrameVideo(): HTMLVideoElement | null {
-    const direct = document.querySelector('video')
-    if (direct) return direct
+    const candidates = collectVideos(document)
     for (const f of Array.from(document.querySelectorAll('iframe'))) {
       try {
-        const v = f.contentDocument?.querySelector('video')
-        if (v) return v as HTMLVideoElement
+        candidates.push(...collectVideos(f.contentDocument))
       } catch {
         continue
       }
     }
-    return null
+    return pickBestVideo(candidates)
   }
 
   function attach(video: HTMLVideoElement): void {
@@ -586,9 +632,28 @@ function runAdSkipInFrame(): void {
     mo.observe(document.documentElement ?? document.body!, { childList: true, subtree: true })
   }
 
-  onMessageAddListener((message: unknown) => {
+  onMessageAddListener((message: unknown, _sender, sendResponse) => {
     if (!message || typeof message !== 'object') return false
     const msg = message as { type?: string; adRanges?: unknown }
+
+    // 播放器位于 iframe 内时，播放状态查询会由该 iframe 的本监听器响应。
+    // 主 frame 分支的同类监听器拿不到 video 会返回 ok:false，因此子 frame 必须
+    // 也注册，否则跨域 iframe 场景下永远读不到播放进度。
+    if (msg.type === 'getPlayback') {
+      const v = findFrameVideo()
+      if (v) {
+        sendResponse({
+          ok: true,
+          currentTime: v.currentTime || 0,
+          duration: Number.isFinite(v.duration) ? v.duration : 0,
+          src: v.currentSrc || v.src || '',
+        })
+      } else {
+        sendResponse({ ok: false, error: i18n('options_no_video_element') })
+      }
+      return false
+    }
+
     if (msg.type !== 'hlsFilterResult') return false
     const list = Array.isArray(msg.adRanges) ? (msg.adRanges as SkipRange[]) : []
     if (list.length === 0) return false
