@@ -242,6 +242,12 @@
   "popup_ad_duration": {
     "message": "Ad duration"
   },
+  "popup_playback_cleaned": {
+    "message": "Player is using the ad-free playlist"
+  },
+  "popup_playback_original": {
+    "message": "Player is using the original playlist; ads will be skipped"
+  },
   "popup_no_active_tab": {
     "message": "No active tab found"
   },

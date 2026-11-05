@@ -300,6 +300,13 @@ body {
   margin-left: 4px;
 }
 
+.popup-detect-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-fg);
+  margin-bottom: 8px;
+}
+
 .popup-quick-actions {
   display: flex;
   flex-direction: column;

@@ -73,17 +73,9 @@ function installHlsHooks(): void {
         }
         const text = await response.clone().text()
         logger.info('[AdClear HLS] m3u8 content len:', text.length, 'first 100:', text.slice(0, 100))
-        const filtered = await filterPlaylist(text, url)
-        if (filtered !== null) {
-          const headers = new Headers()
-          headers.set('Content-Type', ct || 'application/vnd.apple.mpegurl')
-          headers.set('Cache-Control', 'no-store')
-          return new Response(filtered, {
-            status: 200,
-            statusText: 'OK',
-            headers,
-          })
-        }
+        // 只做广告检测，原样返回响应：页面播放数据源绝不修改，
+        // 广告由 badge 按检测到的区间 seek 跳过；清洗结果仅供下载链路使用
+        void detectPlaylistAdRanges(text, url)
         return response
       } catch (e) {
         logger.warn('[AdClear HLS] fetch hook failed:', (e as Error).message)
@@ -111,12 +103,8 @@ function installHlsHooks(): void {
       if (this.readyState === 4 && this.status === 200) {
         try {
           const text = this.responseText
-          const filtered = await filterPlaylist(text, url)
-          if (filtered !== null) {
-            Object.defineProperty(this, 'responseText', { value: filtered, writable: false, configurable: true })
-            Object.defineProperty(this, 'response', { value: filtered, writable: false, configurable: true })
-            this.dispatchEvent(new Event('readystatechange'))
-          }
+          // 只做检测，不覆写 responseText/response，页面播放数据源保持原样
+          void detectPlaylistAdRanges(text, url)
         } catch {
           // ignore
         }
@@ -161,9 +149,18 @@ function isM3u8ContentType(contentType: string): boolean {
 }
 
 /**
- * 发给 background 过滤，返回清洗后的 m3u8 文本（或 null 表示不过滤）
+ * 发给 background 过滤，返回广告检测结果（区间 + 报告）
+ *
+ * 页面播放链路只做检测，绝不替换播放器拿到的 m3u8 响应：
+ *   - 替换响应会改变播放器的数据源，且不可恢复
+ *   - data-url / 清洗文本不是所有播放器都支持（相对路径会以错误基准解析导致分片 404）
+ *   - 广告由 badge 按返回的 adRanges 做 seek 跳过
+ * 媒体下载与推送走独立链路，投递模式只在那里生效
  */
-async function filterPlaylist(text: string, baseUrl: string): Promise<string | null> {
+async function detectPlaylistAdRanges(
+  text: string,
+  baseUrl: string,
+): Promise<{ adRanges?: Array<{ start: number; end: number; duration: number }>; report?: unknown } | null> {
   try {
     const MAX_BRIDGE_RETRIES = 3
     const BRIDGE_TIMEOUT_MS = 5000
@@ -172,44 +169,48 @@ async function filterPlaylist(text: string, baseUrl: string): Promise<string | n
       const result = await sendToBridge(text, baseUrl, BRIDGE_TIMEOUT_MS)
       if (result !== null || attempt === MAX_BRIDGE_RETRIES) {
         if (attempt > 1 && result !== null) {
-          logger.info('[AdClear HLS] filterPlaylist succeeded on retry:', attempt)
+          logger.info('[AdClear HLS] detect succeeded on retry:', attempt)
         }
         return result
       }
-      logger.warn('[AdClear HLS] filterPlaylist bridge returned null, retrying:', attempt)
+      logger.warn('[AdClear HLS] detect bridge returned null, retrying:', attempt)
       if (attempt < MAX_BRIDGE_RETRIES) {
         await new Promise((r) => setTimeout(r, BRIDGE_RETRY_BASE_MS * attempt))
       }
     }
     return null
   } catch (e) {
-    logger.warn('[AdClear HLS] filterPlaylist error:', (e as Error).message)
+    logger.warn('[AdClear HLS] detect error:', (e as Error).message)
     return null
   }
 }
 
-async function sendToBridge(text: string, baseUrl: string, timeoutMs: number): Promise<string | null> {
+async function sendToBridge(
+  text: string,
+  baseUrl: string,
+  timeoutMs: number,
+): Promise<{ adRanges?: Array<{ start: number; end: number; duration: number }>; report?: unknown } | null> {
   const reqId = `hls-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  logger.info('[AdClear HLS] filterPlaylist sending to bridge, reqId:', reqId, 'baseUrl:', baseUrl.slice(0, 80))
-  return await new Promise<string | null>((resolve) => {
+  logger.info('[AdClear HLS] detect sending to bridge, reqId:', reqId, 'baseUrl:', baseUrl.slice(0, 80))
+  return await new Promise((resolve) => {
     const handler = (e: MessageEvent) => {
       if (e.source !== window || e.data?.__adclear !== reqId) return
       window.removeEventListener('message', handler)
-      const filtered = e.data.filtered ?? null
       const error = e.data.error as string | undefined
       if (error) {
-        logger.warn('[AdClear HLS] filterPlaylist bridge error:', error)
+        logger.warn('[AdClear HLS] detect bridge error:', error)
         resolve(null)
         return
       }
-      logger.info('[AdClear HLS] filterPlaylist got response, filtered:', filtered !== null ? `len=${filtered.length}` : 'null')
-      resolve(filtered)
+      const adRanges = (e.data.adRanges ?? []) as Array<{ start: number; end: number; duration: number }>
+      logger.info('[AdClear HLS] detect got response, adRanges:', adRanges.length)
+      resolve({ adRanges, report: e.data.report })
     }
     window.addEventListener('message', handler)
     window.postMessage({ __adclear: reqId, type: 'processHlsPlaylist', text, baseUrl, pageUrl: location.href }, '*')
     setTimeout(() => {
       window.removeEventListener('message', handler)
-      logger.warn('[AdClear HLS] filterPlaylist timeout, no bridge response')
+      logger.warn('[AdClear HLS] detect timeout, no bridge response')
       resolve(null)
     }, timeoutMs)
   })

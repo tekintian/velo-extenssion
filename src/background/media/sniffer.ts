@@ -16,7 +16,8 @@
 import { logger } from '@/lib/logger'
 import { extractBaseName } from '@/lib/naming'
 import type { MediaItem, DashPair, DashRole } from './types'
-import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
+import { buildConfig, DEFAULT_CONFIG, processPlaylist, resolveMediaVariant } from '@/engine/hls/hls-filter'
+import type { ProcessResult } from '@/engine/hls/types'
 import { persistentStorage } from '@/lib/storage'
 import { settingsStore } from '@/lib/storage'
 import { DEFAULT_SETTINGS } from '@/types'
@@ -842,6 +843,7 @@ export function startSniffer(): void {
           })()
 
           if (_m3u8ProcessHandler) {
+            logger.info('[sniffer][DIAG-0] dispatching m3u8 to processor, tabId:', pending.tabId, 'url:', pending.url.slice(0, 100))
             void _m3u8ProcessHandler(pending.url, pending.tabId, pending.requestHeaders)
           } else {
             void processM3u8InBackground(pending.url, pending.tabId, pending.requestHeaders)
@@ -1128,7 +1130,20 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
 
     // 4. processPlaylist
     logger.info('[sniffer] step 4: processPlaylist...')
-    const result = await processPlaylist(text, m3u8Url, m3u8Url, cfg)
+    const raw = await processPlaylist(text, m3u8Url, m3u8Url, cfg)
+    // master 列表下钻：主列表只有变体索引，广告在变体媒体列表里。
+    // 下钻后的地址与原文同时供检测与下载上下文使用，避免把主列表当地址。
+    let result: ProcessResult | null = raw
+    let mediaUrl = m3u8Url
+    if (raw.mode === 'master') {
+      const variant = await resolveMediaVariant(text, m3u8Url, cfg)
+      if (!variant) {
+        logger.info('[sniffer] master playlist has no usable variant, url:', m3u8Url.slice(0, 100))
+        return
+      }
+      mediaUrl = variant.url
+      result = await processPlaylist(variant.text, variant.url, m3u8Url, cfg)
+    }
     logger.info('[sniffer] step 4 done: mode:', result.mode, 'ads:', 'report' in result ? (result.report as { ads?: number })?.ads ?? 0 : 0)
 
     // 5. 输出阶段 — 由 _m3u8ProcessHandler 接管（background.ts 注入的 veloProcessM3u8）
@@ -1148,40 +1163,46 @@ async function processM3u8InBackground(m3u8Url: string, tabId: number, sniffedHe
       }
     }
 
-    // 5b. 如果有 cleaned m3u8（检测到广告或可下载），广播给 badge 显示下载按钮 + AdSkipper
-    if ('cleaned' in result && typeof result.cleaned === 'string') {
-      const baseName = extractBaseName(m3u8Url)
-      const adRanges = 'adRanges' in result ? result.adRanges : []
+    // 5b. 广播给 badge（下载按钮 + AdSkipper 区间）
+    //     页面播放链路永不替换数据源，播放器拿到的始终是原始 m3u8，
+    //     cleaned 只供下载/推送链路使用
+    const hasCleaned = 'cleaned' in result && typeof result.cleaned === 'string'
+    const skipRanges = ('adRanges' in result ? result.adRanges : []) as Array<{ start: number; end: number; duration: number }>
+    if (hasCleaned || skipRanges.length > 0) {
+      const baseName = extractBaseName(mediaUrl)
       let pageTitle = ''
       try {
         const tab = await chrome.tabs.get(tabId)
         pageTitle = tab?.title?.trim() || ''
       } catch { /* ignore */ }
       try {
-        const ctx = {
-          cleaned: result.cleaned,
-          baseName,
-          pageTitle,
-          report: result.report,
-          segments: 'segments' in result ? result.segments : [],
-          reasons: 'reasons' in result ? result.reasons : {},
-          pageHost,
-          baseUrl: m3u8Url,
-          detectedAt: Date.now(),
+        if (hasCleaned && result && 'cleaned' in result && typeof result.cleaned === 'string') {
+          const ctx = {
+            cleaned: result.cleaned,
+            baseName,
+            pageTitle,
+            report: result.report,
+            segments: 'segments' in result ? result.segments : [],
+            reasons: 'reasons' in result ? result.reasons : {},
+            pageHost,
+            baseUrl: mediaUrl,
+            detectedAt: Date.now(),
+            playback: 'original' as const,
+          }
+          const CLEANED_KEY = 'hlsLastCleaned'
+          const all = (await persistentStorage.get<Record<string, typeof ctx>>(CLEANED_KEY)) ?? {}
+          all[String(tabId)] = ctx
+          await persistentStorage.set(CLEANED_KEY, all)
         }
-        const CLEANED_KEY = 'hlsLastCleaned'
-        const all = (await persistentStorage.get<Record<string, typeof ctx>>(CLEANED_KEY)) ?? {}
-        all[String(tabId)] = ctx
-        await persistentStorage.set(CLEANED_KEY, all)
 
         await chrome.tabs.sendMessage(tabId, {
           type: 'hlsFilterResult',
-          adRanges: adRanges,
+          adRanges: skipRanges,
           baseName,
           pageTitle,
           report: result.report,
         })
-        logger.info('[sniffer] hlsFilterResult broadcasted:', adRanges?.length ?? 0, 'ad ranges, baseName:', baseName, 'pageTitle:', pageTitle ? pageTitle.slice(0, 40) : '(empty)')
+        logger.info('[sniffer] hlsFilterResult broadcasted:', skipRanges.length, 'ranges, baseName:', baseName, 'pageTitle:', pageTitle ? pageTitle.slice(0, 40) : '(empty)')
       } catch (e) {
         logger.warn('[sniffer] broadcast hlsFilterResult failed:', (e as Error).message)
       }

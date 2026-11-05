@@ -54,12 +54,13 @@ export const DEFAULT_CONFIG: AdFilterConfig = {
  */
 export async function buildConfig(
   userConfig: Partial<AdFilterConfig>,
-  pageHost: string,
+  pageHostOrUrl: string,
 ): Promise<AdFilterConfig> {
   const base: AdFilterConfig = { ...DEFAULT_CONFIG, ...userConfig }
 
-  // 站点规则叠加
-  const { rule, patterns: sitePatterns, forceKeep } = await getSiteRule(pageHost)
+  // 站点规则叠加（pageHost 需与花样域/站点清单使用同一 host 口径）
+  const ruleHost = toRuleHost(pageHostOrUrl)
+  const { rule, patterns: sitePatterns, forceKeep } = await getSiteRule(ruleHost)
 
   // 合并 URL 正则：默认 + 用户 + 站点规则
   const userPats = base.urlPatterns
@@ -85,6 +86,16 @@ export async function buildConfig(
     _patterns: allPatterns,
     _forceKeep: forceKeep,
     _appliedRule: rule,
+  }
+}
+
+/** 把 pageHost / pageUrl 统一成 host 口径 */
+function toRuleHost(input: string): string {
+  if (!input) return ''
+  try {
+    return new URL(input).hostname.toLowerCase()
+  } catch {
+    return input.toLowerCase()
   }
 }
 
@@ -244,7 +255,11 @@ export async function processPlaylist(
     if (seg) adSegmentUrls.push(seg.url)
   }
 
-  // 广告时间区间
+  // 广告时间区间（原始时间轴坐标，含广告分片在内累加）
+  // 页面播放与下载推送是两条独立路径：
+  //   下载推送 → 使用 cleaned 列表，广告分片已被物理剔除
+  //   页面播放 → 若播放器拿到的是原始列表，广告仍在时间轴上，必须按此区间 seek 跳过
+  // 因此各模式都返回原始坐标区间，由 badge 依据视频实际时长判定时间轴是否已清洗
   const adRanges = computeAdRangesFromSegments(parsed.segments, detection.adSegments)
 
   if (config.logToConsole) {
@@ -300,6 +315,76 @@ export async function processPlaylist(
     segments: parsed.segments,
     adRanges,
   }
+}
+
+/**
+ * master 播放列表递归处理 — 广告都在变体媒体列表里，主列表本身只有索引
+ *
+ * 站点常见结构：播放器先拿 index.m3u8（master，几十字节），再按带宽拉取
+ * 实际分片列表。只检测 master 永远得到 "0 广告"，因此必须下钻变体。
+ *
+ * 选片策略：优先带宽最高的变体（分辨率最高、广告信号最完整），
+ * 失败则依次回退到其余变体；全部失败返回 null，调用方按无广告处理。
+ *
+ * @param masterText    master m3u8 原文
+ * @param masterUrl     master 的绝对 URL（解析变体相对路径的基准）
+ * @param pageUrl       观看页 URL
+ * @param config        运行时配置
+ * @param authHeaders   认证头（Cookie/Referer/UA 等）
+ * @param fetcher       拉取文本的注入函数（便于单测；默认 fetch）
+ */
+export async function processMasterPlaylist(
+  masterText: string,
+  masterUrl: string,
+  pageUrl: string,
+  config: AdFilterConfig,
+  authHeaders?: Record<string, string>,
+  fetcher?: (url: string) => Promise<string>,
+): Promise<ProcessResult | null> {
+  const selected = await resolveMediaVariant(masterText, masterUrl, config, authHeaders, fetcher)
+  if (!selected) return null
+  return await processPlaylist(selected.text, selected.url, pageUrl, config, authHeaders)
+}
+
+/** 解析 master 并下钻到实际媒体列表（返回选中变体的地址与原文） */
+export async function resolveMediaVariant(
+  masterText: string,
+  masterUrl: string,
+  config: AdFilterConfig,
+  authHeaders?: Record<string, string>,
+  fetcher?: (url: string) => Promise<string>,
+): Promise<{ url: string; text: string } | null> {
+  const variants = parseMasterPlaylist(masterText, masterUrl)
+  if (variants.length === 0) return null
+
+  const ordered = [...variants].sort((a, b) => b.bandwidth - a.bandwidth)
+  const fetchText = fetcher ?? ((url: string) => fetchPlaylistText(url, authHeaders))
+
+  for (const variant of ordered) {
+    try {
+      const text = await fetchText(variant.url)
+      if (!text || !/#EXTINF:/i.test(text)) continue
+      if (config.logToConsole) {
+        logger.info('[HLS-AdFilter] master variant chosen:', variant.url, 'bw:', variant.bandwidth)
+      }
+      return { url: variant.url, text }
+    } catch (e) {
+      logger.warn('[HLS-AdFilter] master variant fetch failed:', variant.url, (e as Error).message)
+    }
+  }
+  return null
+}
+
+/** 拉取 m3u8 文本（带认证头，供 master 变体下钻使用） */
+async function fetchPlaylistText(
+  url: string,
+  authHeaders?: Record<string, string>,
+): Promise<string> {
+  const init: RequestInit = { cache: 'no-store' }
+  if (authHeaders && Object.keys(authHeaders).length > 0) init.headers = authHeaders
+  const resp = await fetch(url, init)
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  return await resp.text()
 }
 
 /** 兼容性 base64 编码（非浏览器环境） */

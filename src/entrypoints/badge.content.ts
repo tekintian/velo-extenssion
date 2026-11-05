@@ -83,14 +83,13 @@ function resolveBadgeFileName(): string | undefined {
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
-  allFrames: false,
+  allFrames: true,
   runAt: 'document_idle',
 
   main() {
-    try {
-      if (window.self !== window.top) return
-    } catch {
-      // cross-origin top → 也在顶层，继续
+    if (window.self !== window.top) {
+      runAdSkipInFrame()
+      return
     }
 
     let stats: BadgeStats | null = null
@@ -145,9 +144,12 @@ export default defineContentScript({
         handleReport(msg.report as { ads?: number; adDuration?: number; contentDuration?: number; appliedRule?: { name?: string } | null } | undefined)
       }
       if (msg.type === 'hlsFilterResult') {
-        // 有广告区间时设 AdSkipper
+        console.info('[AdClear AdSkip][DIAG-4] hlsFilterResult received, adRanges:', (msg.adRanges as unknown[] | undefined)?.length ?? 0, 'baseName:', msg.baseName)
+        // 页面播放始终是原始列表，区间有效即直接安装跳过器
         if (msg.adRanges && (msg.adRanges as unknown[]).length > 0) {
-          setupAdSkipper(msg.adRanges as Array<{ start: number; end: number; duration: number }>)
+          setupAdSkipper(
+            msg.adRanges as Array<{ start: number; end: number; duration: number }>,
+          )
         }
         if (msg.baseName) {
           const displayName = resolveBadgeFileName() ?? msg.pageTitle ?? msg.baseName
@@ -220,7 +222,9 @@ export default defineContentScript({
       }, FADE_MS)
     }
 
-    function setupAdSkipper(adRanges: Array<{ start: number; end: number; duration: number }>): void {
+    function setupAdSkipper(
+      adRanges: Array<{ start: number; end: number; duration: number }>,
+    ): void {
       if (!adRanges || adRanges.length === 0) return
       // 读配置检查 enableAdSkip 开关
       chrome.storage.local.get(['hlsFilterConfig'], (cfg) => {
@@ -246,6 +250,16 @@ export default defineContentScript({
         }
         logger.info('[AdClear AdSkip] 监听', adRanges.length, '个广告区间')
       })
+    }
+
+    /**
+     * 判断播放器时间轴是否仍包含广告
+     *
+     * 页面播放链路永不替换数据源，播放器拿到的始终是原始 m3u8，
+     * 广告分片仍在时间轴上，因此只要下发了区间就必须 seek 跳过。
+     */
+    function timelineHasAds(_video: HTMLVideoElement): boolean {
+      return true
     }
 
     function findVideo(): HTMLVideoElement | null {
@@ -289,6 +303,8 @@ export default defineContentScript({
         }
         // 常规广告区间跳过
         if (!adSkipState.skipping && adSkipState.ranges.length > 0) {
+          // 时间轴已被清洗（页面 hook 替换了响应）时广告不在轴上，不能按原坐标 seek
+          if (!timelineHasAds(video)) return
           for (const r of adSkipState.ranges) {
             if (t >= r.start && t < r.end) {
               adSkipState.skipping = true
@@ -502,3 +518,89 @@ export default defineContentScript({
     logger.info('[AdClear badge] content script loaded')
   },
 })
+
+interface SkipRange {
+  readonly start: number
+  readonly end: number
+  readonly duration: number
+}
+
+function runAdSkipInFrame(): void {
+  let ranges: SkipRange[] = []
+  let skipping = false
+  let attached = false
+
+  // 页面播放链路永不替换数据源，时间轴上广告始终存在，有区间即 seek
+  function timelineHasAds(_video: HTMLVideoElement): boolean {
+    return true
+  }
+
+  function findFrameVideo(): HTMLVideoElement | null {
+    const direct = document.querySelector('video')
+    if (direct) return direct
+    for (const f of Array.from(document.querySelectorAll('iframe'))) {
+      try {
+        const v = f.contentDocument?.querySelector('video')
+        if (v) return v as HTMLVideoElement
+      } catch {
+        continue
+      }
+    }
+    return null
+  }
+
+  function attach(video: HTMLVideoElement): void {
+    if (attached) return
+    attached = true
+    video.addEventListener('timeupdate', () => {
+      if (skipping || ranges.length === 0) return
+      const t = video.currentTime
+      if (!timelineHasAds(video)) return
+      for (const r of ranges) {
+        if (t >= r.start && t < r.end) {
+          skipping = true
+          video.currentTime = r.end + 0.05
+          setTimeout(() => {
+            skipping = false
+          }, 500)
+          break
+        }
+      }
+    })
+  }
+
+  function tryAttach(): void {
+    const v = findFrameVideo()
+    if (v) {
+      attach(v)
+      return
+    }
+    if (ranges.length === 0) return
+    const mo = new MutationObserver(() => {
+      const vv = findFrameVideo()
+      if (vv) {
+        attach(vv)
+        mo.disconnect()
+      }
+    })
+    mo.observe(document.documentElement ?? document.body!, { childList: true, subtree: true })
+  }
+
+  onMessageAddListener((message: unknown) => {
+    if (!message || typeof message !== 'object') return false
+    const msg = message as { type?: string; adRanges?: unknown }
+    if (msg.type !== 'hlsFilterResult') return false
+    const list = Array.isArray(msg.adRanges) ? (msg.adRanges as SkipRange[]) : []
+    if (list.length === 0) return false
+    chrome.storage.local.get(['hlsFilterConfig'], (cfg) => {
+      const c = (cfg?.hlsFilterConfig as { enableAdSkip?: boolean }) ?? {}
+      if (c.enableAdSkip === false) return
+      ranges = list
+      tryAttach()
+      logger.info('[AdClear AdSkip] frame skipper ready, ranges:', list.length)
+    })
+    return false
+  })
+
+  tryAttach()
+}

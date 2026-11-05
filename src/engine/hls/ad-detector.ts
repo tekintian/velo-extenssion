@@ -1,5 +1,5 @@
 /**
- * 广告分片检测 — 7 信号加权
+ * 广告分片检测 — 9 信号加权
  *
  * 移植自 NDM ad-filter.js detectAds + _detectSequenceJumps + _detectShortBlocks
  *
@@ -8,7 +8,8 @@
  *   +3  scte35              命中 #EXT-X-SCTE35-OUT / #EXT-X-SCTE35-CMD（SCTE-35 广告信令）
  *   +3  dateRangeAd         命中 #EXT-X-DATERANGE 且 CLASS 含 ad/sponsor/promo 或带 SCTE35 字段
  *   +3  sequence-jump       discontinuity 块首片序列跳号（跳上→跑一段→跳回 = 广告插入）
- *   +3  short-block         短 discontinuity 块夹在长块之间（dytt 类: 长内容夹短广告）
+ *   +3  short-block         短 discontinuity 块夹在长块之间（需经 URL / 少数派目录佐证）
+ *   +3  minority-path-block 块路径前缀属于少数派（正片全在 A 目录，广告整块换 B 目录投放）
  *   +2  url-pattern         分片 URL 匹配广告正则
  *   +2  origin-differs      分片 origin 与多数分片 origin 不一致（跨域 CDN 投放）
  *   +1  path-differs        分片 path 前缀与多数分片不一致
@@ -112,25 +113,149 @@ export function detectShortBlocks(segments: readonly Segment[]): Set<number> {
   }
   if (blocks.length < 3) return shortSet
 
-  // 2) 块时长中位数
+  // 2) 块时长中位数 + 单块分片数中位数
   const durs = blocks.map((b) => b.dur).filter((d) => d > 0).sort((a, b) => a - b)
   if (durs.length === 0) return shortSet
   const median = durs[Math.floor(durs.length / 2)] ?? 0
   if (median <= 0) return shortSet
 
-  // 3) 短块判定
-  //    (a) 块时长 << 中位数 且 < 60s 且 分片数 < 20
-  //    (b) 分片数 ≤3 且 块时长 < 中位数×0.75（抓 block10: 3片14.2s < 中位20.3×0.75=15.2s）
-  const shortThreshold = Math.min(median * 0.3, 60)
+  const segLens = blocks.map((b) => b.segs.length).filter((n) => n > 0).sort((a, b) => a - b)
+  const medianSegs = segLens[Math.floor(segLens.length / 2)] ?? 0
+
+  // 3) 短块判定（均以"相对中位数"为准，不写死绝对秒数）
+  //    (a) 块时长 << 中位数（< 0.5×）—— 抓 20片40s 的正片块之间的 13s / 17s 广告块
+  //    (b) 分片数 ≤3 且 块时长 < 中位数×0.75
+  //    (c) 分片数明显少于多数派块（< 0.6×中位片数）且 块时长 < 中位数×0.75
+  const durRatio = median * 0.5
   const segCountThreshold = median * 0.75
+  const segLenRatio = medianSegs * 0.6
   for (const b of blocks) {
-    const isShort = b.dur > 0 && b.dur < shortThreshold && b.segs.length < 20
+    const isShort = b.dur > 0 && b.dur < durRatio
     const isFewSegs = b.dur > 0 && b.segs.length <= 3 && b.dur < segCountThreshold
-    if (isShort || isFewSegs) {
+    const isFewerSegs = b.dur > 0 && medianSegs >= 5 && b.segs.length < segLenRatio && b.dur < segCountThreshold
+    if (isShort || isFewSegs || isFewerSegs) {
       for (const s of b.segs) shortSet.add(s.index)
     }
   }
   return shortSet
+}
+
+/**
+ * 检测"少数派路径块" = 跨 CDN / 独立子目录投放的广告块
+ *
+ * 典型场景（kkzy/tnoQ2Gnh 类站点）：正片全在 `/20221216/xxx/2000kb/hls/`，
+ * 广告整块换成 `/20261101/yyy/10082kb/hls/`，hash 文件名无尾号、无任何广告标签，
+ * 只能靠"路径前缀属于少数派"识别。单/双分片的异常片不判，避免误伤。
+ */
+export function detectMinorityPathBlocks(segments: readonly Segment[]): Set<number> {
+  const minoritySet = new Set<number>()
+  if (!segments || segments.length < 6) return minoritySet
+
+  // 1) 分片路径前缀（origin + 目录）多数派统计
+  const prefixCount = new Map<string, number>()
+  for (const s of segments) {
+    const p = pathPrefixOf(s.url)
+    if (p) prefixCount.set(p, (prefixCount.get(p) ?? 0) + 1)
+  }
+  if (prefixCount.size < 2) return minoritySet
+
+  let majorityPrefix = ''
+  let majorityCount = 0
+  for (const [p, c] of prefixCount) {
+    if (c > majorityCount) {
+      majorityCount = c
+      majorityPrefix = p
+    }
+  }
+  if (majorityCount < segments.length * 0.5) return minoritySet
+
+  // 2) 按 discontinuity 分块
+  const blocks: Array<{ segs: Segment[] }> = []
+  let cur: { segs: Segment[] } | null = null
+  for (const s of segments) {
+    if (!cur || s.discontinuity) {
+      cur = { segs: [] }
+      blocks.push(cur)
+    }
+    cur.segs.push(s)
+  }
+
+  // 3) 多数派块的典型片数（用于识别"广告块片数远少于正片块"）
+  const segLens = blocks.map((b) => b.segs.length).sort((a, b) => a - b)
+  const medianSegs = segLens[Math.floor(segLens.length / 2)] ?? 0
+
+  // 4) 少数派块判定：块内多数分片前缀 != 多数派前缀，
+  //    且块片数不超多数派块典型片数（广告块通常显著短于正片块）。
+  //    同一前缀被多个块复用时更可信，但单块站点也必须识别，故不作为硬性条件。
+  const blockPrefixOf = new Map<number, { prefix: string; count: number }>()
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const b = blocks[bi]!
+    if (b.segs.length < 2) continue
+    const bc = new Map<string, number>()
+    for (const s of b.segs) {
+      const p = pathPrefixOf(s.url)
+      if (p) bc.set(p, (bc.get(p) ?? 0) + 1)
+    }
+    let blockPrefix = ''
+    let blockPrefixCount = 0
+    for (const [p, c] of bc) {
+      if (c > blockPrefixCount) {
+        blockPrefixCount = c
+        blockPrefix = p
+      }
+    }
+    if (!blockPrefix || blockPrefix === majorityPrefix) continue
+    blockPrefixOf.set(bi, { prefix: blockPrefix, count: blockPrefixCount })
+  }
+
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const info = blockPrefixOf.get(bi)
+    if (!info) continue
+    const b = blocks[bi]!
+    const fewerSegs = medianSegs > 0 && b.segs.length <= medianSegs * 1.5
+    if (fewerSegs) {
+      for (const s of b.segs) minoritySet.add(s.index)
+    }
+  }
+  return minoritySet
+}
+
+/** origin + 目录路径前缀（不含文件名） */
+function pathPrefixOf(url: string): string | null {
+  try {
+    const u = new URL(url)
+    return u.origin + u.pathname.split('/').slice(0, -1).join('/')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 短块是否可作为广告采信
+ *
+ * 短块结构证据仅在以下两种情况成立：
+ *   1) 该块属于少数派路径块（跨目录投放，如 /20261101/xxx/10082kb/hls）；
+ *   2) URL 显式带广告标识（ads/ 目录、ad= 参数等）。
+ *
+ * 同目录 + hash 命名站点（dytt-tvs 类）广告无法靠 URL 区分，但此类站点的短块
+ * 与正片块时长比例差异显著（< 0.45×），且不存在正片碎块，故允许直接采信。
+ */
+function isShortBlockAdmissible(s: Segment, minoritySet: ReadonlySet<number>, hasCrossDirAds: boolean): boolean {
+  if (minoritySet.has(s.index)) return true
+  if (!hasCrossDirAds) return true
+  if (!s.url) return false
+  try {
+    const u = new URL(s.url)
+    return (
+      u.pathname
+        .toLowerCase()
+        .split('/')
+        .some((part) => /^ads?($|[-_.])|^advertis|^preroll|^midroll|^postroll|^spot/.test(part)) ||
+      /[?&](ad|adid|ad_id|adbreak|spotid)=/i.test(u.search)
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -223,11 +348,18 @@ export function detectAds(parsed: ParsedPlaylist, config: AdFilterConfig): Detec
   const patterns = config._patterns ?? []
   const useDurationHeuristic = segs.length >= (config.minSegmentsForStats || 4)
 
-  // 预处理：跳号检测 + 短块检测
+  // 预处理：跳号检测 + 短块检测 + 少数派路径块检测
   const jumpSet = detectSequenceJumps(segs)
   const jumpDetected = jumpSet.size > 0
   const shortSet = detectShortBlocks(segs)
   const shortDetected = shortSet.size > 0
+  const minoritySet = detectMinorityPathBlocks(segs)
+  const minorityDetected = minoritySet.size > 0
+
+  // 是否存在跨目录投放（少数派路径块）。
+  // kkzy 类站点广告整块换目录投放，正片目录里的短碎块与广告块时长比例重叠，
+  // 此时短块必须靠少数派目录佐证；dytt 类站点全部同目录，短块可直接采信。
+  const hasCrossDirAds = minorityDetected
 
   for (const s of segs) {
     let score = 0
@@ -250,9 +382,14 @@ export function detectAds(parsed: ParsedPlaylist, config: AdFilterConfig): Detec
       score += 3
       r.push(`sequence-jump(seg#${s.seqNum !== null && s.seqNum !== undefined ? s.seqNum : '?'})`)
     }
-    if (shortDetected && shortSet.has(s.index)) {
+    // short-block 结构证据：需经 URL / 少数派目录佐证（站点无正片碎块时直接采信）
+    if (shortDetected && shortSet.has(s.index) && isShortBlockAdmissible(s, minoritySet, hasCrossDirAds)) {
       score += 3
       r.push('short-block')
+    }
+    if (minorityDetected && minoritySet.has(s.index)) {
+      score += 3
+      r.push('minority-path-block')
     }
 
     for (const p of patterns) {

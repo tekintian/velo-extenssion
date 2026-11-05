@@ -9,7 +9,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { processPlaylist, buildConfig, DEFAULT_CONFIG } from '@/engine/hls/hls-filter'
+import { processPlaylist, processMasterPlaylist, resolveMediaVariant, buildConfig, DEFAULT_CONFIG } from '@/engine/hls/hls-filter'
 
 const SIMPLE_MEDIA_PLAYLIST = `#EXTM3U
 #EXT-X-VERSION:3
@@ -110,6 +110,107 @@ describe('hls-filter', () => {
     it('handles non-m3u8 content gracefully', async () => {
       const result = await processPlaylist('<html>not m3u8</html>', 'https://cdn.example.com/index.m3u8', 'https://example.com/video', DEFAULT_CONFIG)
       expect(result).toBeDefined()
+    })
+
+    it('returns ad ranges in passthrough mode', async () => {
+      const cfg = await buildConfig({ ...DEFAULT_CONFIG, mode: 'passthrough' }, 'example.com')
+      const result = await processPlaylist(AD_PLAYLIST, 'https://cdn.example.com/index.m3u8', 'https://example.com/video', cfg)
+      expect(result.mode).toBe('passthrough')
+      if ('adRanges' in result) {
+        expect(result.adRanges.length).toBeGreaterThan(0)
+        const total = result.adRanges.reduce((sum, r) => sum + r.duration, 0)
+        expect(total).toBeGreaterThan(0)
+        expect(total).toBeLessThanOrEqual(result.report.adDuration)
+      }
+    })
+
+    it('returns original-timeline ad ranges alongside cleaned playlist', async () => {
+      const cfg = await buildConfig({ ...DEFAULT_CONFIG, mode: 'm3u8-file' }, 'example.com')
+      const result = await processPlaylist(AD_PLAYLIST, 'https://cdn.example.com/index.m3u8', 'https://example.com/video', cfg)
+      if (result.mode === 'm3u8-file') {
+        expect(result.cleaned).not.toContain('ad.example.com')
+        expect(result.adRanges.length).toBeGreaterThan(0)
+        const total = result.adRanges.reduce((sum, r) => sum + r.duration, 0)
+        expect(total).toBeGreaterThan(0)
+        expect(total).toBeLessThanOrEqual(result.report.adDuration)
+      } else {
+        expect(result.mode).not.toBe('passthrough')
+      }
+    })
+  })
+
+  describe('processMasterPlaylist', () => {
+    it('descends into highest bandwidth variant and detects ads', async () => {
+      const cfg = await buildConfig({ ...DEFAULT_CONFIG, mode: 'passthrough' }, 'example.com')
+      const fetched: string[] = []
+      const fetcher = async (url: string): Promise<string> => {
+        fetched.push(url)
+        return AD_PLAYLIST
+      }
+      const result = await processMasterPlaylist(
+        MASTER_PLAYLIST,
+        'https://cdn.example.com/master.m3u8',
+        'https://example.com/video',
+        cfg,
+        undefined,
+        fetcher,
+      )
+      expect(result).not.toBeNull()
+      expect(result!.mode).toBe('passthrough')
+      expect(fetched[0]).toBe('https://cdn.example.com/720p.m3u8')
+      if (result && 'adRanges' in result) {
+        expect(result.adRanges.length).toBeGreaterThan(0)
+      }
+    })
+
+    it('falls back to next variant when highest bandwidth fails', async () => {
+      const cfg = await buildConfig({ ...DEFAULT_CONFIG, mode: 'passthrough' }, 'example.com')
+      const fetched: string[] = []
+      const fetcher = async (url: string): Promise<string> => {
+        fetched.push(url)
+        if (url.includes('720p')) throw new Error('403')
+        return AD_PLAYLIST
+      }
+      const result = await processMasterPlaylist(
+        MASTER_PLAYLIST,
+        'https://cdn.example.com/master.m3u8',
+        'https://example.com/video',
+        cfg,
+        undefined,
+        fetcher,
+      )
+      expect(result).not.toBeNull()
+      expect(fetched.length).toBe(2)
+      expect(fetched[1]).toBe('https://cdn.example.com/480p.m3u8')
+    })
+
+    it('returns null when no variant is usable', async () => {
+      const cfg = await buildConfig({ ...DEFAULT_CONFIG, mode: 'passthrough' }, 'example.com')
+      const result = await processMasterPlaylist(
+        MASTER_PLAYLIST,
+        'https://cdn.example.com/master.m3u8',
+        'https://example.com/video',
+        cfg,
+        undefined,
+        async () => {
+          throw new Error('offline')
+        },
+      )
+      expect(result).toBeNull()
+    })
+
+    it('returns the chosen variant url so download context stays on media list', async () => {
+      const cfg = await buildConfig({ ...DEFAULT_CONFIG, mode: 'passthrough' }, 'example.com')
+      const variant = await resolveMediaVariant(
+        MASTER_PLAYLIST,
+        'https://cdn.example.com/master.m3u8',
+        cfg,
+        undefined,
+        async () => SIMPLE_MEDIA_PLAYLIST,
+      )
+      expect(variant).not.toBeNull()
+      expect(variant!.url).toBe('https://cdn.example.com/720p.m3u8')
+      expect(variant!.text).toContain('#EXTINF:')
     })
   })
 })

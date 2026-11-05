@@ -57,6 +57,18 @@ export function parseMasterPlaylist(
 }
 
 /**
+ * 标准化媒体序列号
+ *
+ * 分片 URL 尾号常是超长或非顺序号，直接相减会溢出失真，
+ * 这里减去 MEDIA-SEQUENCE 基准，保证块间 delta 有意义。
+ */
+export function normalizeSeqNum(raw: number | null, mediaSeqStart: number): number | null {
+  if (raw === null || !Number.isFinite(raw)) return null
+  const delta = raw - mediaSeqStart
+  return Math.abs(delta) <= Number.MAX_SAFE_INTEGER ? delta : null
+}
+
+/**
  * 完整解析媒体播放列表
  */
 export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
@@ -181,7 +193,7 @@ export function parsePlaylist(text: string, baseUrl: string): ParsedPlaylist {
         cueState,
         scte35: pendingScte35,
         dateRangeAd: pendingDateRangeAd,
-        seqNum: extractSeqNum(absUrl),
+        seqNum: normalizeSeqNum(extractSeqNum(absUrl), mediaSeqStart),
       })
       pendingExtinf = null
       pendingByterange = null

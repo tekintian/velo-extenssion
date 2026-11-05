@@ -30,6 +30,7 @@ function Popup() {
   const [detectInfo, setDetectInfo] = useState<{
     report: { ads: number; total: number; adDuration: number }
     baseUrl: string
+    playback: 'cleaned' | 'original'
   } | null>(null)
   const [dlClient, setDlClient] = useState<DlClient>('native')
   const [siteAds, setSiteAds] = useState(0)
@@ -81,8 +82,15 @@ function Popup() {
         const r = await request<{
           report: { ads: number; total: number; adDuration: number }
           baseUrl: string
+          playback?: 'cleaned' | 'original'
         }>('getLastDetect', { tabId })
-        if (r?.report?.ads && r.report.ads > 0) setDetectInfo(r)
+        if (r?.report?.ads && r.report.ads > 0) {
+          setDetectInfo({
+            report: r.report,
+            baseUrl: r.baseUrl,
+            playback: r.playback === 'cleaned' ? 'cleaned' : 'original',
+          })
+        }
       }
     } catch { /* ignore */ }
 
@@ -320,6 +328,11 @@ function Popup() {
               <span className="popup-detect-label">{i18n('popup_ad_duration')}</span>
               <span className="popup-detect-value">{detectInfo.report.adDuration}s</span>
             </div>
+          </div>
+          <div className="popup-detect-hint">
+            {detectInfo.playback === 'cleaned'
+              ? i18n('popup_playback_cleaned')
+              : i18n('popup_playback_original')}
           </div>
           <div className="popup-quick-actions">
             <button className="btn-quick-primary" onClick={() => void handleDownloadCleanM3u8()}>

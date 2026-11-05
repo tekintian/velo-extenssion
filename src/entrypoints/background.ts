@@ -5,10 +5,10 @@ import { initMessageRouter, registerHandler } from '@/background/messaging/route
 import { PairingManager, type ProbeResult } from '@/background/pairing'
 import { createPushClient } from '@/background/push-client'
 import { startSniffer, setM3u8ProcessHandler, getMediaItems, resolveHlsDelegation } from '@/background/media/sniffer'
-import { setPushClient, pushHls, pushUrl, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig, getCachedDownloadConfig } from '@/background/media/download-client'
+import { setPushClient, pushHls, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig, getCachedDownloadConfig } from '@/background/media/download-client'
 import type { DownloadClientConfig } from '@/background/media/types'
 import { registerMediaHandlers } from '@/background/media/handler'
-import { buildConfig, DEFAULT_CONFIG, processPlaylist } from '@/engine/hls/hls-filter'
+import { buildConfig, DEFAULT_CONFIG, processPlaylist, resolveMediaVariant } from '@/engine/hls/hls-filter'
 import { registerHlsHandlers } from '@/background/hls/handler'
 import { registerDashHandlers } from '@/background/dash/handler'
 import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
@@ -436,6 +436,7 @@ async function veloProcessM3u8(
   sniffedHeaders?: Record<string, string>,
 ): Promise<void> {
   try {
+    logger.info('[velo][DIAG-1] veloProcessM3u8 entered, url:', m3u8Url.slice(0, 100), 'tabId:', tabId)
     const hlsCfg = (await persistentStorage.get<Record<string, unknown>>('hlsFilterConfig')) ?? {}
     const enableFilter = (hlsCfg.enableAdSkip as boolean) ?? true
     const scoreThreshold = (hlsCfg.scoreThreshold as number) ?? 3
@@ -500,6 +501,8 @@ async function veloProcessM3u8(
       pageHost = new URL(m3u8Url).host
     } catch { /* ignore */ }
 
+    // 页面播放链路永不替换响应，广告一律靠 adRanges seek 跳过，
+    // 因此这里不再需要判定 hook 委派状态，区间恒为原始时间轴坐标全量下发。
     const cfg = await buildConfig(
       {
         ...DEFAULT_CONFIG,
@@ -518,25 +521,47 @@ async function veloProcessM3u8(
       }
     } catch { /* ignore */ }
 
-    const result = await processPlaylist(text, m3u8Url, m3u8Url, cfg, hlsAuthHeaders)
+    const raw = await processPlaylist(text, m3u8Url, m3u8Url, cfg, hlsAuthHeaders)
+
+    // master 列表下钻：广告都在变体媒体列表里，主列表只有索引（几十字节），
+    // 不递归就只能得到 0 广告，导致角标不显示、下载按钮消失、跳过失效。
+    // 下钻后的地址与原文同时供检测与下载上下文使用，避免把主列表当地址。
+    let resolved = raw
+    let mediaUrl = m3u8Url
+    let mediaText = text
+    if (raw.mode === 'master') {
+      const variant = await resolveMediaVariant(text, m3u8Url, cfg, hlsAuthHeaders)
+      if (!variant) {
+        logger.info('[velo] master playlist has no usable variant, url:', m3u8Url.slice(0, 100))
+        return
+      }
+      mediaUrl = variant.url
+      mediaText = variant.text
+      resolved = await processPlaylist(variant.text, variant.url, m3u8Url, cfg, hlsAuthHeaders)
+    }
 
     // === 广播 hlsFilterReport 给 badge（对齐 NDM bg.js 行 504-510：广播 [16, report]） ===
-    if (result.report && tabId > 0) {
+    if (resolved.report && tabId > 0) {
       try {
         await chrome.tabs.sendMessage(tabId, {
           type: 'hlsFilterReport',
-          report: result.report,
+          report: resolved.report,
         })
-      } catch {
-        // badge 未注入 — 忽略
+      } catch (e) {
+        logger.warn('[velo][DIAG-2FAIL] hlsFilterReport send failed, tabId:', tabId, 'err:', (e as Error).message)
       }
     }
 
+    logger.info('[velo][DIAG-2] processPlaylist done, mode:', resolved.mode,
+      'hasCleaned:', 'cleaned' in resolved,
+      'hasAdRanges:', 'adRanges' in resolved ? (resolved.adRanges as unknown[]).length : 0,
+      'report.ads:', resolved.report && 'ads' in resolved.report ? resolved.report.ads : 0)
+
     // === 记录统计 ===
-    if (result.report && 'ads' in result.report && result.report.ads > 0) {
+    if (resolved.report && 'ads' in resolved.report && resolved.report.ads > 0) {
       try {
         await recordStats(
-          result.report as { ads: number; adDuration: number; contentDuration: number; appliedRule?: { id: string } | null },
+          resolved.report as { ads: number; adDuration: number; contentDuration: number; appliedRule?: { id: string } | null },
           pageHost,
         )
       } catch (e) {
@@ -546,9 +571,10 @@ async function veloProcessM3u8(
 
     // === 持久化 cleaned context + 广播 hlsFilterResult 给 badge（对齐 NDM bg.js 行 543-558） ===
     // NDM：存 _lastCleaned[tabId]，广播 [18] 给 ct 显示"下载"按钮 + AdSkipper
-    if ('cleaned' in result && typeof result.cleaned === 'string' && tabId > 0) {
-      const baseName = extractBaseName(m3u8Url)
-      const adRanges = 'adRanges' in result ? result.adRanges : []
+    // cleaned 只供下载/推送；页面播放数据源始终为原始列表，广告靠区间 seek 跳过
+    if ('cleaned' in resolved && typeof resolved.cleaned === 'string' && tabId > 0) {
+      const baseName = extractBaseName(mediaUrl)
+      const adRanges = 'adRanges' in resolved ? resolved.adRanges : []
       let pageTitle = ''
       try {
         const tab = await chrome.tabs.get(tabId)
@@ -558,15 +584,16 @@ async function veloProcessM3u8(
       // 持久化 cleaned context（供下载按钮用，对齐 NDM _lastCleaned + _persistCtx）
       try {
         const ctx = {
-          cleaned: result.cleaned,
+          cleaned: resolved.cleaned,
           baseName,
           pageTitle,
-          report: result.report,
-          segments: 'segments' in result ? result.segments : [],
-          reasons: 'reasons' in result ? result.reasons : {},
+          report: resolved.report,
+          segments: 'segments' in resolved ? resolved.segments : [],
+          reasons: 'reasons' in resolved ? resolved.reasons : {},
           pageHost,
-          baseUrl: m3u8Url,
+          baseUrl: mediaUrl,
           detectedAt: Date.now(),
+          playback: 'original' as const,
         }
         const CLEANED_KEY = 'hlsLastCleaned'
         const all = (await persistentStorage.get<Record<string, typeof ctx>>(CLEANED_KEY)) ?? {}
@@ -583,22 +610,23 @@ async function veloProcessM3u8(
           adRanges,
           baseName,
           pageTitle,
-          report: result.report,
+          report: resolved.report,
         })
-        logger.info('[velo] hlsFilterResult broadcasted:', adRanges?.length ?? 0, 'ad ranges, baseName:', baseName)
-      } catch {
-        // badge 未注入 — 忽略
+        logger.info('[velo][DIAG-3] hlsFilterResult sent:', adRanges?.length ?? 0, 'ad ranges, baseName:', baseName)
+      } catch (e) {
+        logger.warn('[velo][DIAG-3FAIL] hlsFilterResult send failed, tabId:', tabId, 'baseName:', baseName, 'err:', (e as Error).message)
       }
     }
 
     // === 推送到桌面端下载客户端（autoPush 控制，对齐 NDM V.I WebSocket 推送） ===
+    // descriptor 必须指向实际媒体列表（master 已下钻），否则下载客户端拿到的主列表没有分片
     const descriptor: MediaDescriptor = {
-      url: m3u8Url,
+      url: mediaUrl,
       pageUrl,
       method: 'GET',
       ext: '.m3u8',
       mime: 'application/vnd.apple.mpegurl',
-      contentLength: text.length,
+      contentLength: mediaText.length,
       contentType: 'application/vnd.apple.mpegurl',
       contentDisposition: '',
       headers: sniffedHeaders ?? {},
@@ -612,24 +640,16 @@ async function veloProcessM3u8(
 
     const dlCfg = getCachedDownloadConfig()
 
-    if (result.mode === 'master') {
-      const variants = ('variants' in result ? result.variants : []) as Array<{ url: string }>
-      if (variants.length > 0) {
-        await pushUrl(variants[0]!.url, descriptor, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
+    if (resolved.mode === 'no-ads' || resolved.mode === 'disabled' || resolved.mode === 'passthrough') {
+      if (dlCfg.autoPush) {
+        await pushHls(descriptor, mediaText, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
       }
       return
     }
 
-    if (result.mode === 'no-ads' || result.mode === 'disabled' || result.mode === 'passthrough') {
+    if ('cleaned' in resolved && typeof resolved.cleaned === 'string') {
       if (dlCfg.autoPush) {
-        await pushHls(descriptor, text, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
-      }
-      return
-    }
-
-    if ('cleaned' in result && typeof result.cleaned === 'string') {
-      if (dlCfg.autoPush) {
-        await pushHls(descriptor, result.cleaned, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
+        await pushHls(descriptor, resolved.cleaned, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
         logger.info('[velo] HLS push completed')
       }
     }

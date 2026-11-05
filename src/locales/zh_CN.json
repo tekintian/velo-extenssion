@@ -242,6 +242,12 @@
   "popup_ad_duration": {
     "message": "广告时长"
   },
+  "popup_playback_cleaned": {
+    "message": "播放器已在广告剔除后的列表上播放"
+  },
+  "popup_playback_original": {
+    "message": "播放器正在播放原始列表，广告将自动跳过"
+  },
   "popup_no_active_tab": {
     "message": "未找到活动标签页"
   },

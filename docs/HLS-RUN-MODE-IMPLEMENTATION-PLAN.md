@@ -228,52 +228,21 @@ const DEFAULT_SETTINGS: Settings = {
 // 种子数据：首次安装时写入用户站点列表，写入后即成为用户数据的一部分
 // 用户可以自由增删——删除种子条目后不会自动恢复
 export const HLS_SITE_SEEDS: string[] = [
-  // 国内主流视频平台
-  'bilibili.com',
   'iqiyi.com',
   'youku.com',
-  'tencent.com',
   'mgtv.com',
-  'sohu.com',
   'pptv.com',
   'ixigua.com',
-  'douyin.com',
-  'kuaishou.com',
-  'weibo.com',
-  'huoshan.com',
   'migu.cn',
   'le.com',
   'pplive.cn',
   'letv.com',
-  // 国际平台
   'youtube.com',
   'youtu.be',
   'netflix.com',
-  'disneyplus.com',
-  'hbo.com',
-  'amazon.com',
-  'primevideo.com',
-  'hulu.com',
-  'paramountplus.com',
-  'crunchyroll.com',
-  'funimation.com',
-  'viki.com',
-  'dailymotion.com',
-  // 直播平台
-  'douyu.com',
-  'huya.com',
-  'bigo.tv',
-  'twitch.tv',
-  'kick.com',
-  // 教育/新闻
-  'coursera.org',
-  'edx.org',
-  'udemy.com',
-  'ted.com',
-  // 测试/调试
-  'github.io',
-  'streamable.com',
-  'test-streams.mux.dev',
+  'qiqi89.com',
+  'vidhub.tv',
+  'www.qianbianse.com',
 ]
 
 // 种子初始化标记（存储在 persistentStorage）

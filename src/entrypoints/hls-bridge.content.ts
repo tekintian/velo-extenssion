@@ -115,37 +115,16 @@ export default defineContentScript({
           return
         }
         logger.info('[AdClear HLS bridge] background response mode:', (response as { mode?: string })?.mode)
-        const filtered = extractFilteredM3u8(response)
-        logger.info('[AdClear HLS bridge] extracted filtered:', filtered !== null ? `len=${filtered.length}` : 'null')
-        window.postMessage({ __adclear: reqId, filtered }, '*')
-        if (filtered !== null && data.baseUrl) {
-          window.postMessage({
-            source: 'adclear-hls',
-            type: 'm3u8-filtered',
-            payload: { cleaned: filtered, baseUrl: data.baseUrl, pageUrl: data.pageUrl ?? '' },
-          }, '*')
-        }
+        // 页面播放链路只回传检测结果：区间与报告
+        // 清洗后的 m3u8 仅供下载/推送链路使用，绝不下发给页面播放器
+        const r = response as { adRanges?: unknown[]; report?: unknown; error?: string } | undefined
+        const adRanges = (r?.adRanges ?? []) as unknown[]
+        logger.info('[AdClear HLS bridge] detect result, adRanges:', adRanges.length)
+        window.postMessage({ __adclear: reqId, adRanges, report: r?.report }, '*')
       } catch (err) {
         logger.warn('[AdClear HLS bridge] error:', (err as Error).message)
-        window.postMessage({ __adclear: reqId, filtered: null, error: (err as Error).message }, '*')
+        window.postMessage({ __adclear: reqId, adRanges: [], error: (err as Error).message }, '*')
       }
     })
   },
 })
-
-/**
- * 从 processHlsPlaylist 响应里提取清洗后的 m3u8 文本
- *
- * 响应结构:
- *   mode='m3u8-file' / 'data-url'  → cleaned 字段
- *   mode='data-url'                → 也可用 url 字段（data: URL）
- *   其它 mode                       → null（原样放行）
- */
-function extractFilteredM3u8(response: unknown): string | null {
-  if (!response || typeof response !== 'object') return null
-  const r = response as { mode?: string; cleaned?: string; url?: string }
-  if (r.mode === 'm3u8-file' || r.mode === 'data-url') {
-    return r.cleaned ?? null
-  }
-  return null
-}
