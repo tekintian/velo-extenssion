@@ -83,9 +83,9 @@
     }
   },
   "popup_client_not_found": {
-    "message": "$1$ client not detected, please make sure it is running",
+    "message": "$CLIENT$ client not detected, please make sure it is running",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       }
     }
@@ -157,9 +157,9 @@
     "message": "Disabled"
   },
   "popup_filtered_count": {
-    "message": "$1$ filtered",
+    "message": "$COUNT$ filtered",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -186,9 +186,9 @@
     "message": "No media on this page"
   },
   "popup_download_fail": {
-    "message": "Download failed: $1$",
+    "message": "Download failed: $ERROR$",
     "placeholders": {
-      "1": {
+      "ERROR": {
         "content": "$1"
       }
     }
@@ -221,17 +221,17 @@
     "message": "Temporarily Enable HLS Detection"
   },
   "popup_temp_enable_success": {
-    "message": "Added $1$ to the enabled list; refresh the page to take effect",
+    "message": "Added $HOST$ to the enabled list; refresh the page to take effect",
     "placeholders": {
-      "1": {
+      "HOST": {
         "content": "$1"
       }
     }
   },
   "popup_temp_enable_fail": {
-    "message": "Enable failed: $1$",
+    "message": "Enable failed: $ERROR$",
     "placeholders": {
-      "1": {
+      "ERROR": {
         "content": "$1"
       }
     }
@@ -258,23 +258,23 @@
     "message": "Please play the video first"
   },
   "popup_sample_saved": {
-    "message": "✓ Ad sample saved (t=$time$s), $total$ block fingerprints learned ($added$ new)",
+    "message": "✓ Ad sample saved (t=$TIME$s), $TOTAL$ block fingerprints learned ($ADDED$ new)",
     "placeholders": {
-      "time": {
+      "TIME": {
         "content": "$1"
       },
-      "added": {
+      "ADDED": {
         "content": "$2"
       },
-      "total": {
+      "TOTAL": {
         "content": "$3"
       }
     }
   },
   "popup_capture_fail": {
-    "message": "Capture failed: $error$",
+    "message": "Capture failed: $ERROR$",
     "placeholders": {
-      "error": {
+      "ERROR": {
         "content": "$1"
       }
     }
@@ -352,9 +352,9 @@
     "message": "Supplement Built-in Seed Sites"
   },
   "options_seeds_supplemented": {
-    "message": "Added $1$ built-in seed sites",
+    "message": "Added $COUNT$ built-in seed sites",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -522,9 +522,9 @@
     "message": "Boost Detection"
   },
   "options_boost_result": {
-    "message": "Boost detection enabled. $1$ fingerprints learned.",
+    "message": "Boost detection enabled. $COUNT$ fingerprints learned.",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -824,34 +824,34 @@
     "message": "This page uses MSE streaming; segment fingerprints have been recorded. See the in-page panel for downloads."
   },
   "download_pushing": {
-    "message": "⏳ Download intercepted, sending to $1$: $2$",
+    "message": "⏳ Download intercepted, sending to $CLIENT$: $FILE$",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       },
-      "2": {
+      "FILE": {
         "content": "$2"
       }
     }
   },
   "download_pushed_success": {
-    "message": "✓ Sent to $1$ for download: $2$",
+    "message": "✓ Sent to $CLIENT$ for download: $FILE$",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       },
-      "2": {
+      "FILE": {
         "content": "$2"
       }
     }
   },
   "download_pushed_failed": {
-    "message": "✗ Failed to push to $1$: $2$ (please retry the download)",
+    "message": "✗ Failed to push to $CLIENT$: $ERROR$ (please retry the download)",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       },
-      "2": {
+      "ERROR": {
         "content": "$2"
       }
     }
@@ -925,9 +925,6 @@
   "options_samples_title": {
     "message": "Ad Samples"
   },
-  "options_capture_sample": {
-    "message": "Capture Current Page Ad Sample"
-  },
   "options_no_samples": {
     "message": "No samples"
   },
@@ -946,8 +943,106 @@
   "options_sample_actions": {
     "message": "Actions"
   },
+  "sample_card_title": {
+    "message": "Confirm Ad Sample"
+  },
+  "sample_card_sub": {
+    "message": "Playback paused. Mark which segments are ads."
+  },
+  "sample_verdict_ad": {
+    "message": "Ad"
+  },
+  "sample_verdict_content": {
+    "message": "Content"
+  },
+  "sample_verdict_unknown": {
+    "message": "Unconfirmed"
+  },
+  "sample_preview": {
+    "message": "Preview"
+  },
+  "sample_preview_fail": {
+    "message": "Preview failed"
+  },
+  "sample_preview_no_video": {
+    "message": "No player found; cannot preview"
+  },
+  "sample_preview_unseekable": {
+    "message": "This stream is not seekable (likely live); segment preview unavailable"
+  },
+  "sample_preview_playing": {
+    "message": "▶ Previewing segment #$INDEX$ ($DURATION$); pauses automatically when it ends",
+    "placeholders": {
+      "INDEX": {
+        "content": "$1"
+      },
+      "DURATION": {
+        "content": "$2"
+      }
+    }
+  },
+  "sample_preview_finished": {
+    "message": "✓ Segment #$INDEX$ ($DURATION$) preview finished, paused automatically",
+    "placeholders": {
+      "INDEX": {
+        "content": "$1"
+      },
+      "DURATION": {
+        "content": "$2"
+      }
+    }
+  },
+  "sample_preview_autoplay_blocked": {
+    "message": "Autoplay blocked by the browser; segment is located, please press play manually"
+  },
+  "sample_preview_play_fail": {
+    "message": "Playback failed to start; segment is located, please press play manually"
+  },
+  "sample_mark_ad": {
+    "message": "Ad"
+  },
+  "sample_mark_content": {
+    "message": "Not Ad"
+  },
+  "sample_load_full_block": {
+    "message": "Load Full Ad Block"
+  },
+  "sample_load_block_fail": {
+    "message": "Failed to load full ad block"
+  },
+  "sample_confirm_save": {
+    "message": "Confirm & Save"
+  },
+  "sample_cancel": {
+    "message": "Cancel"
+  },
+  "sample_commit_fail": {
+    "message": "Save failed"
+  },
+  "sample_saved_toast": {
+    "message": "✓ Sample saved, $TOTAL$ segment fingerprints stored ($ADDED$ new, $REVOKED$ revoked)",
+    "placeholders": {
+      "ADDED": {
+        "content": "$1"
+      },
+      "TOTAL": {
+        "content": "$2"
+      },
+      "REVOKED": {
+        "content": "$3"
+      }
+    }
+  },
   "options_sample_captured": {
     "message": "Sample captured"
+  },
+  "options_sample_revoked": {
+    "message": "Sample deleted, $COUNT$ fingerprints revoked",
+    "placeholders": {
+      "COUNT": {
+        "content": "$1"
+      }
+    }
   },
   "options_confirm_clear_samples": {
     "message": "Clear all ad samples?"
@@ -1046,9 +1141,9 @@
     "message": "📥 Download ad-free m3u8"
   },
   "badge_ad_filtered": {
-    "message": "$1 ads filtered",
+    "message": "$COUNT$ ads filtered",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -1063,9 +1158,9 @@
     "message": "Download failed"
   },
   "badge_runtime_ad_detected": {
-    "message": "⏭ Ad detected $1$s (recorded, will skip next time)",
+    "message": "⏭ Ad detected $DURATION$s (recorded, will skip next time)",
     "placeholders": {
-      "1": {
+      "DURATION": {
         "content": "$1"
       }
     }
@@ -1074,9 +1169,9 @@
     "message": "⏭ Ad insertion detected (seekbar reset), recording..."
   },
   "badge_ad_skipped": {
-    "message": "⏭ Ad skipped $1$s",
+    "message": "⏭ Ad skipped $DURATION$s",
     "placeholders": {
-      "1": {
+      "DURATION": {
         "content": "$1"
       }
     }
@@ -1110,11 +1205,5 @@
   },
   "options_refresh_failed": {
     "message": "Refresh failed, check the rules URL or background status"
-  },
-  "options_no_active_tab": {
-    "message": "No active tab"
-  },
-  "options_playback_read_fail": {
-    "message": "Failed to read playback state"
   }
 }

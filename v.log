@@ -1,0 +1,11 @@
+=== typecheck ===
+$ tsc --noEmit
+=== lint ===
+=== test ===
+ Test Files  18 passed (18)
+      Tests  270 passed (270)
+=== build ===
+  ├─ .output/chrome-mv3/icons/icon16.png                         1.45 kB  
+  └─ .output/chrome-mv3/icons/icon48.png                         6.41 kB  
+Σ Total size: 676.44 kB                                        
+✔ Finished in 2.434 s

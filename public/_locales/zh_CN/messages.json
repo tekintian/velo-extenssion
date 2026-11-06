@@ -83,9 +83,9 @@
     }
   },
   "popup_client_not_found": {
-    "message": "未检测到 $1$ 客户端，请确认已启动",
+    "message": "未检测到 $CLIENT$ 客户端，请确认已启动",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       }
     }
@@ -157,9 +157,9 @@
     "message": "已禁用"
   },
   "popup_filtered_count": {
-    "message": "已过滤 $1$ 条",
+    "message": "已过滤 $COUNT$ 条",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -186,9 +186,9 @@
     "message": "当前页无媒体"
   },
   "popup_download_fail": {
-    "message": "下载失败: $1$",
+    "message": "下载失败: $ERROR$",
     "placeholders": {
-      "1": {
+      "ERROR": {
         "content": "$1"
       }
     }
@@ -221,17 +221,17 @@
     "message": "临时启用 HLS 探测"
   },
   "popup_temp_enable_success": {
-    "message": "已将 $1$ 加入启用名单，刷新页面后生效",
+    "message": "已将 $HOST$ 加入启用名单，刷新页面后生效",
     "placeholders": {
-      "1": {
+      "HOST": {
         "content": "$1"
       }
     }
   },
   "popup_temp_enable_fail": {
-    "message": "启用失败: $1$",
+    "message": "启用失败: $ERROR$",
     "placeholders": {
-      "1": {
+      "ERROR": {
         "content": "$1"
       }
     }
@@ -258,17 +258,23 @@
     "message": "请先播放视频"
   },
   "popup_sample_saved": {
-    "message": "✓ 已保存广告样本 (t=$time$s)，分片指纹已自动学习",
+    "message": "✓ 已保存广告样本 (t=$TIME$s)，广告块 $TOTAL$ 个分片指纹已入库（新增 $ADDED$ 个）",
     "placeholders": {
-      "time": {
+      "TIME": {
         "content": "$1"
+      },
+      "ADDED": {
+        "content": "$2"
+      },
+      "TOTAL": {
+        "content": "$3"
       }
     }
   },
   "popup_capture_fail": {
-    "message": "捕获失败: $error$",
+    "message": "捕获失败: $ERROR$",
     "placeholders": {
-      "error": {
+      "ERROR": {
         "content": "$1"
       }
     }
@@ -346,9 +352,9 @@
     "message": "补全内置种子站点"
   },
   "options_seeds_supplemented": {
-    "message": "已补全 $1$ 个内置种子站点",
+    "message": "已补全 $COUNT$ 个内置种子站点",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -516,9 +522,9 @@
     "message": "一键增强检测"
   },
   "options_boost_result": {
-    "message": "已开启增强检测，当前已学习 $1$ 条指纹",
+    "message": "已开启增强检测，当前已学习 $COUNT$ 条指纹",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -818,34 +824,34 @@
     "message": "该页面使用 MSE 流式播放，已记录分片指纹。可在面板中查看下载项。"
   },
   "download_pushing": {
-    "message": "⏳ 已接管下载，正在发送到 $1$：$2$",
+    "message": "⏳ 已接管下载，正在发送到 $CLIENT$：$FILE$",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       },
-      "2": {
+      "FILE": {
         "content": "$2"
       }
     }
   },
   "download_pushed_success": {
-    "message": "✓ 已发送到 $1$ 下载：$2$",
+    "message": "✓ 已发送到 $CLIENT$ 下载：$FILE$",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       },
-      "2": {
+      "FILE": {
         "content": "$2"
       }
     }
   },
   "download_pushed_failed": {
-    "message": "✗ 推送到 $1$ 失败：$2$（请重试下载）",
+    "message": "✗ 推送到 $CLIENT$ 失败：$ERROR$（请重试下载）",
     "placeholders": {
-      "1": {
+      "CLIENT": {
         "content": "$1"
       },
-      "2": {
+      "ERROR": {
         "content": "$2"
       }
     }
@@ -919,9 +925,6 @@
   "options_samples_title": {
     "message": "广告样本"
   },
-  "options_capture_sample": {
-    "message": "捕获当前页广告样本"
-  },
   "options_no_samples": {
     "message": "暂无样本"
   },
@@ -940,8 +943,106 @@
   "options_sample_actions": {
     "message": "操作"
   },
+  "sample_card_title": {
+    "message": "确认广告样本"
+  },
+  "sample_card_sub": {
+    "message": "已暂停播放，请确认哪些分片属于广告"
+  },
+  "sample_verdict_ad": {
+    "message": "广告"
+  },
+  "sample_verdict_content": {
+    "message": "内容"
+  },
+  "sample_verdict_unknown": {
+    "message": "待确认"
+  },
+  "sample_preview": {
+    "message": "预览"
+  },
+  "sample_preview_fail": {
+    "message": "预览失败"
+  },
+  "sample_preview_no_video": {
+    "message": "未找到可用的播放器，无法预览"
+  },
+  "sample_preview_unseekable": {
+    "message": "当前流不可拖动（可能为直播），无法预览分片"
+  },
+  "sample_preview_playing": {
+    "message": "▶ 正在预览分片 #$INDEX$（$DURATION$），播放结束自动暂停",
+    "placeholders": {
+      "INDEX": {
+        "content": "$1"
+      },
+      "DURATION": {
+        "content": "$2"
+      }
+    }
+  },
+  "sample_preview_finished": {
+    "message": "✓ 分片 #$INDEX$（$DURATION$）预览完毕，已自动暂停",
+    "placeholders": {
+      "INDEX": {
+        "content": "$1"
+      },
+      "DURATION": {
+        "content": "$2"
+      }
+    }
+  },
+  "sample_preview_autoplay_blocked": {
+    "message": "浏览器拦截了自动播放，已定位到分片，请手动点击播放"
+  },
+  "sample_preview_play_fail": {
+    "message": "播放启动失败，已定位到分片，请手动点击播放"
+  },
+  "sample_mark_ad": {
+    "message": "广告"
+  },
+  "sample_mark_content": {
+    "message": "非广告"
+  },
+  "sample_load_full_block": {
+    "message": "载入完整广告块"
+  },
+  "sample_load_block_fail": {
+    "message": "载入完整广告块失败"
+  },
+  "sample_confirm_save": {
+    "message": "确认保存"
+  },
+  "sample_cancel": {
+    "message": "取消"
+  },
+  "sample_commit_fail": {
+    "message": "保存失败"
+  },
+  "sample_saved_toast": {
+    "message": "✓ 样本已保存，$TOTAL$ 个分片指纹已入库（新增 $ADDED$ 个，撤销 $REVOKED$ 个）",
+    "placeholders": {
+      "ADDED": {
+        "content": "$1"
+      },
+      "TOTAL": {
+        "content": "$2"
+      },
+      "REVOKED": {
+        "content": "$3"
+      }
+    }
+  },
   "options_sample_captured": {
     "message": "样本已捕获"
+  },
+  "options_sample_revoked": {
+    "message": "已删除样本，同时撤销 $COUNT$ 个指纹",
+    "placeholders": {
+      "COUNT": {
+        "content": "$1"
+      }
+    }
   },
   "options_confirm_clear_samples": {
     "message": "确定清除所有广告样本？"
@@ -1040,9 +1141,9 @@
     "message": "📥 下载去广告 m3u8"
   },
   "badge_ad_filtered": {
-    "message": "$1 广告已过滤",
+    "message": "$COUNT$ 广告已过滤",
     "placeholders": {
-      "1": {
+      "COUNT": {
         "content": "$1"
       }
     }
@@ -1057,9 +1158,9 @@
     "message": "下载失败"
   },
   "badge_runtime_ad_detected": {
-    "message": "⏭ 运行时检测到广告 $1$s (已记录, 下次自动跳过)",
+    "message": "⏭ 运行时检测到广告 $DURATION$s (已记录, 下次自动跳过)",
     "placeholders": {
-      "1": {
+      "DURATION": {
         "content": "$1"
       }
     }
@@ -1068,9 +1169,9 @@
     "message": "⏭ 检测到广告插入 (seekbar 重置), 记录中..."
   },
   "badge_ad_skipped": {
-    "message": "⏭ 已自动跳过广告 $1$s",
+    "message": "⏭ 已自动跳过广告 $DURATION$s",
     "placeholders": {
-      "1": {
+      "DURATION": {
         "content": "$1"
       }
     }
@@ -1104,11 +1205,5 @@
   },
   "options_refresh_failed": {
     "message": "刷新失败，请检查规则地址或后台状态"
-  },
-  "options_no_active_tab": {
-    "message": "无活动标签页"
-  },
-  "options_playback_read_fail": {
-    "message": "读取播放状态失败"
   }
 }

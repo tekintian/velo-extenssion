@@ -48,6 +48,15 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['.output/**', '.wxt/**', 'node_modules/**'],
+    files: ['scripts/**/*.ts'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: {
+      'no-undef': 'off',
+    },
+  },
+  {
+    ignores: ['.output/**', '.wxt/**', 'node_modules/**', 'tmp/**'],
   },
 )

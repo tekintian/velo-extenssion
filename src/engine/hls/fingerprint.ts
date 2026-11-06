@@ -15,5 +15,7 @@ export {
   hasUserMarkedFingerprints,
   learnFingerprint,
   getLearnedCount,
+  listLearnedFingerprints,
+  removeLearnedFingerprint,
   USER_MARKED_SOURCE,
 } from '@engine/shared/fingerprint'

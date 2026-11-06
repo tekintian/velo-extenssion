@@ -1,4 +1,4 @@
-const fs = require('fs')
+import fs from 'node:fs'
 
 function parse(file, base) {
   const t = fs.readFileSync(file, 'utf8')

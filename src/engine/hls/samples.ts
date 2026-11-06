@@ -13,11 +13,20 @@
 
 import { persistentStorage } from '@/lib/storage'
 import type { Segment } from './types'
-import { computeFingerprint, learnFingerprint, USER_MARKED_SOURCE } from './fingerprint'
+import {
+  computeFingerprint,
+  learnFingerprint,
+  lookupUserMarkedFingerprint,
+  removeLearnedFingerprint,
+  USER_MARKED_SOURCE,
+} from './fingerprint'
 
 const KEY = 'hlsAdSamples'
 const MAX = 100
 const DEFAULT_WINDOW = 3
+
+/** 分片判定：ad=广告 content=内容 unknown=待确认 */
+export type SegmentVerdict = 'ad' | 'content' | 'unknown'
 
 export interface SampleSegment {
   readonly index: number
@@ -27,6 +36,23 @@ export interface SampleSegment {
   readonly seqNum: number | null
   readonly isCurrent: boolean
   readonly signals: readonly string[]
+  /**
+   * 分片判定
+   *
+   * signals 只表示"命中理由"，不等于"被判为广告"：无理由的分片同样可能是广告，
+   * 需人工确认。历史样本无此字段时按 deriveVerdict 推导，保持向后兼容。
+   */
+  readonly verdict?: SegmentVerdict
+}
+
+/** 由 signals 推导初始判定（历史样本兼容 + 捕获时赋初值） */
+export function deriveVerdict(signals: readonly string[] | undefined): SegmentVerdict {
+  return signals && signals.length > 0 ? 'ad' : 'unknown'
+}
+
+/** 读取分片判定，无 verdict 字段时按 signals 推导 */
+export function resolveVerdict(seg: SampleSegment): SegmentVerdict {
+  return seg.verdict ?? deriveVerdict(seg.signals)
 }
 
 export interface AdSample {
@@ -47,6 +73,14 @@ export interface AdSample {
    * 新样本直接存完整块，auto-learn 优先使用它。
    */
   readonly block?: SampleSegment[]
+  /**
+   * 人工复核记录
+   *
+   * keep  = 用户确认属于广告的分片 index
+   * reject = 用户确认为非广告的分片 index
+   * 仅在保存时确认卡中产生；未复核的样本无此字段。
+   */
+  readonly review?: { at: number; keep: readonly number[]; reject: readonly number[] }
   note: string
 }
 
@@ -125,6 +159,7 @@ function toSampleSegment(
   reasons: SampleReasons | undefined,
 ): SampleSegment {
   const s = segments[i]!
+  const signals = readSignals(reasons, s.index)
   return {
     index: s.index,
     url: s.url,
@@ -132,7 +167,8 @@ function toSampleSegment(
     discontinuity: s.discontinuity,
     seqNum: s.seqNum,
     isCurrent: i === cur,
-    signals: readSignals(reasons, s.index),
+    signals,
+    verdict: deriveVerdict(signals),
   }
 }
 
@@ -210,20 +246,50 @@ export async function listSamples(): Promise<AdSample[]> {
 
 /**
  * 清空样本
+ *
+ * 同时撤销这些样本学到的 user-marked 指纹：样本是自学习的唯一凭据，
+ * 样本删除后指纹若留在库里就变成无主数据，用户再也无法通过删样本来回滚误判。
+ * 返回被撤销的指纹数量。
+ *
+ * @param revoke 是否连带撤销指纹。备份导入（replace）场景必须传 false：
+ *   导入包自带 learnedFingerprints 且先于样本写入，此时撤销会把刚导入的指纹抹掉。
  */
-export async function clearSamples(): Promise<void> {
+export async function clearSamples(revoke = true): Promise<number> {
+  const list = await listSamples()
+  let revoked = 0
+  if (revoke) {
+    for (const s of list) {
+      revoked += await revokeSampleFingerprints(s)
+    }
+  }
   await persistentStorage.set(KEY, [])
+  return revoked
 }
 
 /**
  * 删除单个样本
+ *
+ * 与 clearSamples 一致：删除样本必须连带撤销其 fingerprint，
+ * 否则「删样本」这个操作对屏蔽效果毫无影响，误标会永久生效。
+ * 成功删除时返回被撤销的指纹数量，样本不存在时返回 null。
  */
-export async function removeSample(id: string): Promise<boolean> {
+export async function removeSample(id: string): Promise<number | null> {
   const list = await listSamples()
+  const target = list.find((s) => s.id === id)
+  if (!target) return null
+  const revoked = await revokeSampleFingerprints(target)
   const filtered = list.filter((s) => s.id !== id)
-  if (filtered.length === list.length) return false
   await persistentStorage.set(KEY, filtered)
-  return true
+  return revoked
+}
+
+/** 撤销单个样本全部分片的 user-marked 指纹，返回撤销数量 */
+async function revokeSampleFingerprints(sample: AdSample): Promise<number> {
+  let revoked = 0
+  for (const seg of resolveSampleBlock(sample)) {
+    if (await revokeFingerprint(seg.url)) revoked++
+  }
+  return revoked
 }
 
 /**
@@ -267,29 +333,26 @@ export interface AutoLearnResult {
  *      - 历史样本无 block 时回退：在 window 内扩展，边界可能被截断
  *   2. 对块内每片算指纹 + learnFingerprint(source='user-marked')
  *
+ * 仅排除用户复核时明确判为 'content' 的分片：
+ *   - 'ad'      规则命中，学
+ *   - 'unknown' 规则未命中，但用户主动保存样本即代表"这里像广告"，仍学
+ *   - 'content' 用户明确确认为正常内容，绝不入库
+ * 若把 unknown 也排除，会导致规则漏检的广告永远学不到指纹，
+ * 而这类漏检恰恰是最需要自学习补上的场景。
+ *
  * user-marked 指纹独立于 enableFingerprint 开关参与匹配（见 hls-filter），
  * 保证用户主动标注的广告后续必然被识别。
  */
 export async function autoLearnFromSample(sample: AdSample): Promise<AutoLearnResult> {
   if (!sample) return { added: 0, total: 0 }
 
-  let block: readonly SampleSegment[]
-  if (sample.block && sample.block.length > 0) {
-    block = sample.block
-  } else if (sample.window && sample.window.length > 0) {
-    // 历史样本回退路径：窗口内扩展
-    const curIdx = sample.window.findIndex((w) => w.isCurrent)
-    if (curIdx < 0) return { added: 0, total: 0 }
-    const blk = computeDiscontinuityBlock(sample.window, curIdx)
-    if (!blk) return { added: 0, total: 0 }
-    block = sample.window.slice(blk.start, blk.end + 1)
-  } else {
-    return { added: 0, total: 0 }
-  }
+  const block = resolveSampleBlock(sample)
+  if (block.length === 0) return { added: 0, total: 0 }
 
   let added = 0
   let total = 0
   for (const w of block) {
+    if (resolveVerdict(w) === 'content') continue
     try {
       const hash = await computeFingerprint(w.url)
       if (!hash) continue
@@ -304,4 +367,110 @@ export async function autoLearnFromSample(sample: AdSample): Promise<AutoLearnRe
     }
   }
   return { added, total }
+}
+
+/**
+ * 解析样本的可学习分片块
+ *
+ * 导出供预览器复用：浮层展示的清单必须与 auto-learn 学习的集合完全一致，
+ * 否则用户确认的内容与实际入库内容不一致。
+ */
+export function resolveSampleBlock(sample: AdSample): readonly SampleSegment[] {
+  if (sample.block && sample.block.length > 0) return sample.block
+  if (sample.window && sample.window.length > 0) {
+    const curIdx = sample.window.findIndex((w) => w.isCurrent)
+    if (curIdx < 0) return []
+    const blk = computeDiscontinuityBlock(sample.window, curIdx)
+    if (!blk) return []
+    return sample.window.slice(blk.start, blk.end + 1)
+  }
+  return []
+}
+
+/**
+ * 校验分片判定入参是否合法
+ *
+ * 只在 ad / content 两态间切换：unknown 是初始态而非用户可选动作，
+ * 避免改判接口被用来把已确认分片回退成未确认。
+ */
+export function isValidVerdict(v: unknown): v is 'ad' | 'content' {
+  return v === 'ad' || v === 'content'
+}
+
+/**
+ * 应用用户改判，返回不可变的新样本
+ *
+ * 同时维护 window / block 两个集合中的同索引分片（二者在块内重叠），
+ * 保证 UI 展示与 auto-learn 读到的判定一致；并重建 review 记录。
+ *
+ * 不触碰存储，由调用方决定是否落库——草稿阶段改判不落库。
+ */
+export function applyVerdict(sample: AdSample, segIndex: number, verdict: 'ad' | 'content'): AdSample {
+  const patch = (list: readonly SampleSegment[]): SampleSegment[] =>
+    list.map((s) => (s.index === segIndex ? { ...s, verdict } : s))
+
+  const window2 = patch(sample.window)
+  const block2 = sample.block ? patch(sample.block) : undefined
+
+  const reviewed = resolveSampleBlock({ ...sample, window: window2, ...(block2 ? { block: block2 } : {}) })
+  const keep: number[] = []
+  const reject: number[] = []
+  for (const s of reviewed) {
+    const v = resolveVerdict(s)
+    if (v === 'ad') keep.push(s.index)
+    else if (v === 'content') reject.push(s.index)
+  }
+
+  return {
+    ...sample,
+    window: window2,
+    ...(block2 ? { block: block2 } : {}),
+    review: { at: Date.now(), keep, reject },
+  }
+}
+
+/**
+ * 用完整块替换样本的分片清单
+ *
+ * 「载入完整广告块」：把样本的可学习范围从当前窗口扩展到整块，
+ * 供用户在确认卡里看到完整广告块的全部分片，而无须拖动播放器。
+ *
+ * 合并时保留样本中已有的判定：用户在点「载入完整块」之前做过的改判
+ * 不能被完整块的初始 verdict 覆盖，否则确认卡会出现"改判后又变回去"。
+ */
+export function applyFullBlock(sample: AdSample, fullBlock: readonly SampleSegment[]): AdSample {
+  if (fullBlock.length === 0) return sample
+  // 已存在的判定：window 与 block 中凡被用户改判过的都以 'ad' / 'content' 落地，
+  // 'unknown' 是初始态，不应阻止完整块里规则命中带来的 'ad'
+  const existing = new Map<number, 'ad' | 'content'>()
+  for (const s of [...sample.window, ...(sample.block ?? [])]) {
+    const v = resolveVerdict(s)
+    if (v !== 'unknown') existing.set(s.index, v)
+  }
+  const filled = fullBlock.map((s) => {
+    const v = existing.get(s.index)
+    return v ? { ...s, verdict: v } : s
+  })
+  const covered = new Set(filled.map((s) => s.index))
+  const extra = sample.window.filter((s) => !covered.has(s.index))
+  const merged = [...filled, ...extra].sort((a, b) => a.index - b.index)
+  return { ...sample, block: [...filled], window: merged }
+}
+
+/**
+ * 撤销指定分片的 user-marked 指纹
+ *
+ * 用户复核判定某分片为非广告时调用：若该分片曾被误学入指纹库，
+ * 必须同步移除，否则下次播放会把正常内容当作广告跳掉。
+ */
+export async function revokeFingerprint(url: string): Promise<boolean> {
+  try {
+    const hash = await computeFingerprint(url)
+    if (!hash) return false
+    const hit = await lookupUserMarkedFingerprint(hash)
+    if (!hit) return false
+    return await removeLearnedFingerprint(hash)
+  } catch {
+    return false
+  }
 }

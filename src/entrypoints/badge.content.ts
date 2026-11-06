@@ -20,6 +20,7 @@ import { defineContentScript } from 'wxt/utils/define-content-script'
 import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
 import { sendMessage, onMessageAddListener } from '@/lib/runtime'
+import { openSampleCard } from '@/lib/sample-confirm'
 
 const BADGE_ID = '__adclear_hls_badge__'
 const STYLE_ID = '__adclear_hls_badge_style__'
@@ -106,6 +107,8 @@ export default defineContentScript({
       seekbarResetCount: 0,
       inRuntimeAd: false,
       runtimeAdStart: 0,
+      /** 样本预览进行中：跳过器必须让路，否则会立刻把预览位置挪到区间末尾 */
+      previewHold: false,
     }
 
     interface BadgeStats {
@@ -183,6 +186,15 @@ export default defineContentScript({
           sendResponse({ ok: false, error: i18n('options_no_video_element') })
         }
         // 同步响应，无需保持消息通道
+        return false
+      }
+      // popup / options 发起「保存广告样本」：本 frame 有播放器则接管确认卡
+      if (msg.type === 'openSampleCard') {
+        const payload = (msg as { payload?: { tabId?: number } }).payload
+        const tabId = payload?.tabId
+        if (typeof tabId === 'number' && findVideo()) {
+          void openSampleCard(tabId, { findVideo, onPreviewHoldChange: setPreviewHold })
+        }
         return false
       }
       return false
@@ -280,11 +292,33 @@ export default defineContentScript({
       return pickBestVideo(candidates)
     }
 
+    /**
+     * 切换样本预览互斥状态
+     *
+     * 同时写两处：本实例的 adSkipState.previewHold 供主 frame 的跳过器使用，
+     * video 上的 _adclearPreviewHold 供其它实例（含跨域 iframe 的 runAdSkipInFrame）识别。
+     * 进入时顺手清掉 skipping，避免上一次跳广告留下的 500ms 抑制窗口吃掉预览。
+     */
+    function setPreviewHold(holding: boolean): void {
+      adSkipState.previewHold = holding
+      if (holding) adSkipState.skipping = false
+      const v = findVideo()
+      if (v) {
+        (v as HTMLVideoElement & { _adclearPreviewHold?: boolean })._adclearPreviewHold = holding
+      }
+    }
+
     function attachSkipper(video: HTMLVideoElement): void {
       if ((video as HTMLVideoElement & { _adclearSkipAttached?: boolean })._adclearSkipAttached) return
       ;(video as HTMLVideoElement & { _adclearSkipAttached?: boolean })._adclearSkipAttached = true
       video.addEventListener('timeupdate', () => {
         const t = video.currentTime
+        // 样本预览期间整体让路：预览分片通常就在广告区间内，
+        // 任何自动 seek 都会把用户正在看的预览画面破坏掉
+        if (adSkipState.previewHold) {
+          adSkipState.prevTime = t
+          return
+        }
         // 运行时广告结束检测
         if (adSkipState.inRuntimeAd && t > adSkipState.runtimeAdStart + 5 && !adSkipState.skipping) {
           const range = { start: adSkipState.runtimeAdStart, end: t, duration: t - adSkipState.runtimeAdStart, runtime: true }
@@ -583,6 +617,11 @@ function runAdSkipInFrame(): void {
     return true
   }
 
+  /** 样本预览期间跳过器必须让路（标记挂在 video 上，跨实例/跨 frame 都可见） */
+  function isPreviewHold(video: HTMLVideoElement): boolean {
+    return (video as HTMLVideoElement & { _adclearPreviewHold?: boolean })._adclearPreviewHold === true
+  }
+
   function findFrameVideo(): HTMLVideoElement | null {
     const candidates = collectVideos(document)
     for (const f of Array.from(document.querySelectorAll('iframe'))) {
@@ -600,6 +639,7 @@ function runAdSkipInFrame(): void {
     attached = true
     video.addEventListener('timeupdate', () => {
       if (skipping || ranges.length === 0) return
+      if (isPreviewHold(video)) return
       const t = video.currentTime
       if (!timelineHasAds(video)) return
       for (const r of ranges) {
@@ -650,6 +690,24 @@ function runAdSkipInFrame(): void {
         })
       } else {
         sendResponse({ ok: false, error: i18n('options_no_video_element') })
+      }
+      return false
+    }
+
+    // 播放器在本 frame 内时，确认卡必须渲染在这里：
+    // 若交给主 frame，用户暂停了视频却看不到画面，无法判断分片是否为广告
+    if (msg.type === 'openSampleCard') {
+      const payload = (msg as { payload?: { tabId?: number } }).payload
+      const tabId = payload?.tabId
+      if (typeof tabId === 'number' && findFrameVideo()) {
+        void openSampleCard(tabId, {
+          findVideo: findFrameVideo,
+          // 本分支靠 video 上的标记与其它跳过器实例互斥，无需回调本实例的 adSkipState
+          onPreviewHoldChange: (holding: boolean) => {
+            const v = findFrameVideo()
+            if (v) (v as HTMLVideoElement & { _adclearPreviewHold?: boolean })._adclearPreviewHold = holding
+          },
+        })
       }
       return false
     }

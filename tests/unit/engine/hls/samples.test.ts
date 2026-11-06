@@ -30,21 +30,42 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@/engine/hls/fingerprint', () => ({
   computeFingerprint: vi.fn(async () => null),
   learnFingerprint: vi.fn(async () => false),
+  lookupUserMarkedFingerprint: vi.fn(async () => null),
+  removeLearnedFingerprint: vi.fn(async () => false),
   USER_MARKED_SOURCE: 'user-marked',
 }))
 
 import type { Mock } from 'vitest'
+import { persistentStorage } from '@/lib/storage'
 import {
+  applyFullBlock,
+  applyVerdict,
   autoLearnFromSample,
   captureSample,
+  clearSamples,
   computeDiscontinuityBlock,
+  deriveVerdict,
   findSegIndexAtTime,
+  isValidVerdict,
+  removeSample,
+  resolveSampleBlock,
+  resolveVerdict,
+  revokeFingerprint,
 } from '@/engine/hls/samples'
-import { computeFingerprint, learnFingerprint } from '@/engine/hls/fingerprint'
+import {
+  computeFingerprint,
+  learnFingerprint,
+  lookupUserMarkedFingerprint,
+  removeLearnedFingerprint,
+} from '@/engine/hls/fingerprint'
 import type { Segment } from '@/engine/hls/types'
 
 const mockCompute = computeFingerprint as unknown as Mock
 const mockLearn = learnFingerprint as unknown as Mock
+const mockLookupUser = lookupUserMarkedFingerprint as unknown as Mock
+const mockRemoveLearned = removeLearnedFingerprint as unknown as Mock
+const mockStorageGet = persistentStorage.get as unknown as Mock
+const mockStorageSet = persistentStorage.set as unknown as Mock
 
 function makeSegment(index: number, duration = 4): Segment {
   return {
@@ -293,5 +314,207 @@ describe('autoLearnFromSample — 学习统计', () => {
     const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined)!
     const r = await autoLearnFromSample({ ...s, window: [], block: [] })
     expect(r).toEqual({ added: 0, total: 0 })
+  })
+})
+
+describe('deriveVerdict / resolveVerdict', () => {
+  it('有命中理由时为 ad，无理由时为 unknown', () => {
+    expect(deriveVerdict(['ad-block'])).toBe('ad')
+    expect(deriveVerdict([])).toBe('unknown')
+    expect(deriveVerdict(undefined)).toBe('unknown')
+  })
+
+  it('resolveVerdict 优先读 verdict 字段，缺失时按 signals 推导', () => {
+    const base = {
+      index: 1,
+      url: 'u',
+      duration: 4,
+      discontinuity: false,
+      seqNum: 1,
+      isCurrent: true,
+    }
+    expect(resolveVerdict({ ...base, signals: ['x'], verdict: 'content' })).toBe('content')
+    expect(resolveVerdict({ ...base, signals: ['x'] })).toBe('ad')
+    expect(resolveVerdict({ ...base, signals: [] })).toBe('unknown')
+  })
+
+  it('captureSample 为每个分片写入初始 verdict', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] })!
+    const cur = s.window.find((w) => w.isCurrent)!
+    expect(cur.verdict).toBe('ad')
+    const other = s.window.find((w) => !w.isCurrent)!
+    expect(other.verdict).toBe('unknown')
+  })
+})
+
+describe('isValidVerdict', () => {
+  it('只接受 ad / content', () => {
+    expect(isValidVerdict('ad')).toBe(true)
+    expect(isValidVerdict('content')).toBe(true)
+    expect(isValidVerdict('unknown')).toBe(false)
+    expect(isValidVerdict(null)).toBe(false)
+  })
+})
+
+describe('applyVerdict — 人工改判', () => {
+  it('改判后 window 与 block 中同索引分片同步更新', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] })!
+    const next = applyVerdict(s, 2, 'content')
+    expect(next.window.find((w) => w.index === 2)!.verdict).toBe('content')
+    expect(next.block!.find((b) => b.index === 2)!.verdict).toBe('content')
+  })
+
+  it('改判生成 review.keep / reject 记录', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] })!
+    const next = applyVerdict(s, 2, 'content')
+    expect(next.review).toBeDefined()
+    expect(next.review!.reject).toContain(2)
+    expect(next.review!.keep).not.toContain(2)
+  })
+
+  it('不修改原样本（不可变）', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] })!
+    const before = s.window.find((w) => w.index === 2)!.verdict
+    applyVerdict(s, 2, 'content')
+    expect(s.window.find((w) => w.index === 2)!.verdict).toBe(before)
+  })
+})
+
+describe('applyFullBlock — 载入完整广告块', () => {
+  it('用完整块替换并可学习范围扩大', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] }, 1)!
+    const full = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] }, 99)!.window
+    const next = applyFullBlock(s, full)
+    expect(resolveSampleBlock(next).length).toBe(SEGMENTS.length)
+  })
+
+  it('空块原样返回', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined)!
+    expect(applyFullBlock(s, [])).toBe(s)
+  })
+
+  it('保留用户已做的改判，不被完整块初始判定覆盖', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] }, 1)!
+    // 用户先把 #2 改判为非广告
+    const judged = applyVerdict(s, 2, 'content')
+    // 再载入完整块：完整块里 #2 初始为 'ad'，但用户改判必须优先
+    const full = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 2: ['ad-block'] }, 99)!.window
+    const next = applyFullBlock(judged, full)
+    expect(resolveVerdict(next.block!.find((b) => b.index === 2)!)).toBe('content')
+  })
+
+  it('完整块中规则命中的 ad 不被 unknown 初始态抹掉', () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    const full = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 4: ['ad-block'] }, 99)!.window
+    const next = applyFullBlock(s, full)
+    expect(resolveVerdict(next.block!.find((b) => b.index === 4)!)).toBe('ad')
+  })
+})
+
+describe('autoLearnFromSample — 只学习判定为广告的分片', () => {
+  // 全部分片 discontinuity=false 时 computeDiscontinuityBlock 把整段视为一块，
+  // 因此 block 覆盖 SEGMENTS.length（6）片，改判 1 片后学习 5 片
+  it('改判为 content 的分片不入库', async () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, { 1: ['a'], 2: ['b'], 3: ['c'] }, 1)!
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLearn.mockResolvedValue(true)
+    const next = applyVerdict(s, 2, 'content')
+    const r = await autoLearnFromSample(next)
+    expect(r.total).toBe(SEGMENTS.length - 1)
+  })
+
+  it('unknown 仍学习：规则漏检的广告是自学习的主要对象', async () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLearn.mockResolvedValue(true)
+    const r = await autoLearnFromSample(s)
+    expect(r.total).toBe(SEGMENTS.length)
+  })
+
+  it('全部改判为 content 时不学习', async () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    let next = s
+    for (const w of s.block ?? s.window) next = applyVerdict(next, w.index, 'content')
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLearn.mockResolvedValue(true)
+    const r = await autoLearnFromSample(next)
+    expect(r.total).toBe(0)
+  })
+})
+
+describe('revokeFingerprint — 撤销误标指纹', () => {
+  it('库中存在 user-marked 指纹时删除', async () => {
+    mockCompute.mockResolvedValue('hash-1')
+    mockLookupUser.mockResolvedValue({ hash: 'hash-1', adName: 'x', source: 'user-marked' })
+    mockRemoveLearned.mockResolvedValue(true)
+    expect(await revokeFingerprint('https://cdn.example.com/seg-1.ts')).toBe(true)
+  })
+
+  it('指纹不存在时不删除', async () => {
+    mockCompute.mockResolvedValue('hash-2')
+    mockLookupUser.mockResolvedValue(null)
+    expect(await revokeFingerprint('https://cdn.example.com/seg-2.ts')).toBe(false)
+  })
+
+  it('算不出指纹时返回 false', async () => {
+    mockCompute.mockResolvedValue(null)
+    expect(await revokeFingerprint('https://cdn.example.com/x.ts')).toBe(false)
+  })
+})
+
+describe('removeSample / clearSamples — 删除样本连带撤销指纹', () => {
+  // 样本是自学习的唯一凭据：样本删除后指纹若留在库里就变成无主数据，
+  // 「删样本」对屏蔽效果毫无影响，误标会永久生效
+  it('removeSample 撤销该样本全部分片指纹并返回数量', async () => {
+    const sample = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    mockStorageGet.mockResolvedValue([sample])
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLookupUser.mockImplementation(async (hash: string) => ({ hash, adName: 'x', source: 'user-marked' }))
+    mockRemoveLearned.mockResolvedValue(true)
+    const revoked = await removeSample(sample.id)
+    expect(revoked).toBe(SEGMENTS.length)
+    expect(mockStorageSet).toHaveBeenCalledWith('hlsAdSamples', [])
+  })
+
+  it('removeSample 对不存在的样本返回 null 且不改动存储', async () => {
+    mockStorageGet.mockResolvedValue([])
+    mockStorageSet.mockClear()
+    const revoked = await removeSample('not-exist')
+    expect(revoked).toBeNull()
+    expect(mockStorageSet).not.toHaveBeenCalled()
+  })
+
+  it('clearSamples 撤销所有样本指纹', async () => {
+    const a = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    const b = { ...a, id: 'other' }
+    mockStorageGet.mockResolvedValue([a, b])
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLookupUser.mockImplementation(async (hash: string) => ({ hash, adName: 'x', source: 'user-marked' }))
+    mockRemoveLearned.mockResolvedValue(true)
+    const revoked = await clearSamples()
+    expect(revoked).toBe(SEGMENTS.length * 2)
+  })
+
+  it('判为 content 的分片同样会被撤销（其指纹本不应存在）', async () => {
+    const s = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    const judged = applyVerdict(s, 2, 'content')
+    mockStorageGet.mockResolvedValue([judged])
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLookupUser.mockImplementation(async (hash: string) => ({ hash, adName: 'x', source: 'user-marked' }))
+    mockRemoveLearned.mockResolvedValue(true)
+    const revoked = await removeSample(judged.id)
+    expect(revoked).toBe(SEGMENTS.length)
+  })
+
+  it('clearSamples(false) 只清样本不撤销指纹（备份导入场景）', async () => {
+    const sample = captureSample(SEGMENTS, 10, 'h', 'u', REPORT, undefined, 1)!
+    mockStorageGet.mockResolvedValue([sample])
+    mockCompute.mockImplementation(async (url: string) => `h-${url}`)
+    mockLookupUser.mockImplementation(async (hash: string) => ({ hash, adName: 'x', source: 'user-marked' }))
+    mockRemoveLearned.mockResolvedValue(true)
+    mockRemoveLearned.mockClear()
+    const revoked = await clearSamples(false)
+    expect(revoked).toBe(0)
+    expect(mockRemoveLearned).not.toHaveBeenCalled()
   })
 })

@@ -186,26 +186,17 @@ function Popup() {
       alert(i18n('popup_playback_read_fail') + ': ' + (pb.error || i18n('popup_play_video_first')))
       return
     }
-    const r = await request<{ ok?: boolean; error?: string; learned?: number; total?: number }>('captureSample', {
-      tabId: tab.id,
-      currentTime: pb.currentTime,
-    })
-    if (r?.ok) {
-      alert(
-        i18n('popup_sample_saved', [
-          String(Math.round(pb.currentTime)),
-          String(r.learned ?? 0),
-          String(r.total ?? 0),
-        ]),
+    // 保存改为页面内现场复核：定向投递给真正持有 video 的 frame，
+    // 由该 frame 暂停播放并弹出确认卡，popup 本身关闭不影响确认流程。
+    try {
+      await chrome.tabs.sendMessage(
+        tab.id,
+        { type: 'openSampleCard', payload: { tabId: tab.id } },
+        { frameId: pb.frameId },
       )
-    } else {
-      const err = r?.error
-      const msg =
-        err === 'site-inactive' ? i18n('popup_error_site_inactive')
-        : err === 'no-m3u8-context' ? i18n('popup_error_no_m3u8_context')
-        : err === 'sample-out-of-range' ? i18n('popup_error_sample_out_of_range')
-        : i18n('popup_capture_fail', [err ?? i18n('popup_unknown_error')])
-      alert(msg)
+      window.close()
+    } catch (e) {
+      alert(i18n('popup_capture_fail', [(e as Error).message]))
     }
   }
 

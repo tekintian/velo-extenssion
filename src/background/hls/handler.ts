@@ -26,7 +26,24 @@ import { buildConfig, DEFAULT_CONFIG, processPlaylist, resolveMediaVariant } fro
 import type { ProcessResult } from '@/engine/hls/types'
 import { consider, listPending, approve, dismiss } from '@/engine/hls/suggest'
 import { recordStats, getStats, clearStats } from '@/engine/hls/stats'
-import { captureSample, recordSample, autoLearnFromSample, listSamples, removeSample, clearSamples, setSampleNote } from '@/engine/hls/samples'
+import {
+  captureSample,
+  recordSample,
+  autoLearnFromSample,
+  listSamples,
+  removeSample,
+  clearSamples,
+  setSampleNote,
+  computeDiscontinuityBlock,
+  resolveSampleBlock,
+  resolveVerdict,
+  applyVerdict,
+  applyFullBlock,
+  isValidVerdict,
+  revokeFingerprint,
+  type AdSample,
+  type SampleSegment,
+} from '@/engine/hls/samples'
 import { buildExport, applyImport } from '@/engine/hls/io'
 import { getLearnedCount, clearLearned } from '@/engine/hls/fingerprint'
 import { refreshRemoteRules, listAllRules } from '@/engine/hls/hls-rules'
@@ -54,13 +71,145 @@ export interface CleanedContext {
   readonly detectedAt: number
   /**
    * 播放器实际播放的列表来源
-   *   - 'cleaned'  页面 hook 已用清洗后的 m3u8 替换响应，广告分片不在时间轴上
-   *   - 'original' 页面播放原始列表（未启用站点/委派未生效），广告仍在，需靠 seek 跳过
+   *
+   * 页面播放链路永不替换播放器拿到的 m3u8 响应（clean 后的 m3u8 只用于下发下载客户端），
+   * 因此播放器时间轴上广告分片始终存在，恒为 'original'。
+   * 'cleaned' 仅为历史类型保留，当前链路不会产生该值。
    */
   readonly playback?: 'cleaned' | 'original'
 }
 
 const CLEANED_KEY = 'hlsLastCleaned'
+
+/** 样本草稿有效期：用户离开页面后草稿失效，避免内存泄漏 */
+const DRAFT_TTL_MS = 5 * 60 * 1000
+
+interface SampleDraft {
+  sample: AdSample
+  /** 当前片所属的完整 discontinuity 块，供「载入完整广告块」使用 */
+  readonly fullBlock: SampleSegment[]
+  readonly tabId: number
+  readonly createdAt: number
+}
+
+/**
+ * 样本草稿（仅存内存，不落盘）
+ *
+ * 保存样本改为两段式：captureSample 生成草稿 → 页面确认卡复核 →
+ * commitSample 才落库并学指纹。草稿不落盘，页面关闭即自然丢失。
+ */
+const drafts = new Map<string, SampleDraft>()
+
+function pruneDrafts(): void {
+  const now = Date.now()
+  for (const [id, d] of drafts) {
+    if (now - d.createdAt > DRAFT_TTL_MS) drafts.delete(id)
+  }
+}
+
+/**
+ * 取草稿并校验 TTL
+ *
+ * 所有草稿访问都必须走这里：只在创建时 prune 不够，
+ * 用户可能停在确认卡上超过 TTL 再点确认，此时草稿必须视为已失效，
+ * 否则会用过期的分片元数据落库并学习指纹。
+ */
+function getDraft(draftId: string): SampleDraft | null {
+  const d = drafts.get(draftId)
+  if (!d) return null
+  if (Date.now() - d.createdAt > DRAFT_TTL_MS) {
+    drafts.delete(draftId)
+    return null
+  }
+  return d
+}
+
+/** 生成草稿：captureSample 唯一入口 */
+async function handleCaptureDraft(
+  tabId: number,
+  currentTime: number,
+): Promise<
+  | { ok: false; error: string }
+  | { ok: true; draftId: string; pageHost: string; currentTime: number; currentSegIndex: number; segments: ReturnType<typeof mapSegment>[]; expandable: boolean }
+> {
+  let pageUrl = ''
+  try {
+    pageUrl = (await chrome.tabs.get(tabId)).url ?? ''
+  } catch (e) {
+    logger.warn('[hls] captureSample: tab lookup failed, tabId:', tabId, (e as Error).message)
+  }
+  if (!pageUrl) return { ok: false, error: 'no-m3u8-context' }
+
+  const delegation = await resolveHlsDelegation(pageUrl)
+  if (!delegation.active) return { ok: false, error: 'site-inactive' }
+
+  const ctx = await loadCleanedContext(tabId)
+  if (!ctx || !ctx.segments || ctx.segments.length === 0) {
+    return { ok: false, error: 'no-m3u8-context' }
+  }
+
+  let sample: AdSample | null = null
+  try {
+    sample = captureSample(ctx.segments, currentTime, ctx.pageHost, ctx.baseUrl, ctx.report, ctx.reasons)
+  } catch (e) {
+    logger.warn('[hls] captureSample failed:', (e as Error).message)
+    return { ok: false, error: 'capture-failed' }
+  }
+  if (!sample) return { ok: false, error: 'sample-out-of-range' }
+
+  const fullBlock: SampleSegment[] = []
+  const blk = computeDiscontinuityBlock(ctx.segments, sample.currentSegIndex)
+  if (blk) {
+    for (let i = blk.start; i <= blk.end; i++) {
+      const seg = ctx.segments[i]!
+      const known = sample.block?.find((b) => b.index === seg.index)
+      const signals = known?.signals ?? []
+      fullBlock.push({
+        index: seg.index,
+        url: seg.url,
+        duration: seg.duration,
+        discontinuity: seg.discontinuity,
+        seqNum: seg.seqNum,
+        isCurrent: i === sample.currentSegIndex,
+        signals,
+        verdict: known?.verdict ?? (signals.length > 0 ? 'ad' : 'unknown'),
+      })
+    }
+  }
+
+  const draftId = `draft-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+  drafts.set(draftId, { sample, fullBlock, tabId, createdAt: Date.now() })
+  pruneDrafts()
+
+  // 完整块是否比当前可见清单更大：只有更大时才需要给用户「载入完整广告块」入口。
+  // 不能简单判断 block 是否存在 —— 无 discontinuity 时 block 恒等于整段，
+  // 与 window 完全重合，此时按钮点了也不会多加载任何分片。
+  const visible = resolveSampleBlock(sample)
+  const expandable = fullBlock.length > visible.length
+
+  return {
+    ok: true,
+    draftId,
+    pageHost: sample.pageHost,
+    currentTime: sample.currentTime,
+    currentSegIndex: sample.currentSegIndex,
+    segments: visible.map(mapSegment),
+    expandable,
+  }
+}
+
+/** 分片 → 前端可用的精简结构（不暴露 URL，避免被拼装成任意请求） */
+function mapSegment(s: SampleSegment) {
+  return {
+    index: s.index,
+    duration: s.duration,
+    discontinuity: s.discontinuity,
+    isCurrent: s.isCurrent,
+    signals: s.signals,
+    verdict: resolveVerdict(s),
+  }
+}
+
 
 export function registerHlsHandlers(): void {
   registerHandler<{ text: string; baseUrl: string; pageUrl: string }>('processHlsPlaylist', async (message, _sender) => {
@@ -278,22 +427,23 @@ export function registerHlsHandlers(): void {
     return await listSamples()
   })
 
+  // 删除样本连带撤销其 user-marked 指纹：删样本必须能真正回滚误标
   registerHandler<{ id: string }>('removeSample', async (message) => {
     const { id } = message.payload
-    await removeSample(id)
-    return { success: true as const }
+    const revoked = await removeSample(id)
+    return { success: true as const, revoked: revoked ?? 0 }
   })
 
-  // 别名：前端调用 deleteSample 时映射到 removeSample
+  // 别名：options 页历史代码调用 deleteSample
   registerHandler<{ id: string }>('deleteSample', async (message) => {
     const { id } = message.payload
-    await removeSample(id)
-    return { success: true as const }
+    const revoked = await removeSample(id)
+    return { success: true as const, revoked: revoked ?? 0 }
   })
 
   registerHandler('clearSamples', async () => {
-    await clearSamples()
-    return { success: true as const }
+    const revoked = await clearSamples()
+    return { success: true as const, revoked }
   })
 
   registerHandler<{ id: string; note: string }>('setSampleNote', async (message) => {
@@ -303,44 +453,78 @@ export function registerHlsHandlers(): void {
   })
 
   registerHandler<{ tabId: number; currentTime: number }>('captureSample', async (message) => {
-    const { tabId, currentTime } = message.payload
-    // 站点判定必须用「实际播放页面」的 URL：popup 场景 sender.tab 虽存在，
-    // 但 options 页面调用时 sender.tab 为 undefined，会把正常播放的页面
-    // 误判成 site-inactive；此外多 tab 场景 sender.tab 未必等于 tabId 对应页。
-    let pageUrl = ''
-    try {
-      pageUrl = (await chrome.tabs.get(tabId)).url ?? ''
-    } catch (e) {
-      logger.warn('[hls] captureSample: tab lookup failed, tabId:', tabId, (e as Error).message)
-    }
-    if (!pageUrl) {
-      return { ok: false as const, error: 'no-m3u8-context' }
-    }
-    const delegation = await resolveHlsDelegation(pageUrl)
-    if (!delegation.active) {
-      return { ok: false as const, error: 'site-inactive' }
-    }
-    const ctx = await loadCleanedContext(tabId)
-    if (!ctx || !ctx.segments || ctx.segments.length === 0) {
-      return { ok: false as const, error: 'no-m3u8-context' }
-    }
-    let sample
-    try {
-      sample = captureSample(ctx.segments, currentTime, ctx.pageHost, ctx.baseUrl, ctx.report, ctx.reasons)
-    } catch (e) {
-      logger.warn('[hls] captureSample failed:', (e as Error).message)
-      return { ok: false as const, error: 'capture-failed' }
-    }
-    if (!sample) return { ok: false as const, error: 'sample-out-of-range' }
-    await recordSample(sample)
-    const learn = await autoLearnFromSample(sample)
-    logger.info(
-      '[hls] sample captured · auto-learn block:',
-      learn.total,
-      '· new fingerprints:',
-      learn.added,
-    )
-    return { ok: true as const, learned: learn.added, total: learn.total }
+    // 两段式保存：只生成草稿，等用户确认后才落库并学指纹。
+    // 直接落库会在误标时立刻污染指纹库，而删样本不会删指纹，无法回滚。
+    return await handleCaptureDraft(message.payload.tabId, message.payload.currentTime)
+  })
+
+  registerHandler<{ draftId: string }>('loadFullBlock', async (message) => {
+    const { draftId } = message.payload
+    const d = getDraft(draftId)
+    if (!d) return { ok: false as const, error: 'draft-expired' }
+    if (d.fullBlock.length === 0) return { ok: false as const, error: 'no-full-block' }
+    d.sample = applyFullBlock(d.sample, d.fullBlock)
+    return { ok: true as const, segments: resolveSampleBlock(d.sample).map(mapSegment) }
+  })
+
+  registerHandler<{ draftId: string; segIndex: number; verdict: 'ad' | 'content' }>(
+    'setDraftVerdict',
+    async (message) => {
+      const { draftId, segIndex, verdict } = message.payload
+      const d = getDraft(draftId)
+      if (!d) return { ok: false as const, error: 'draft-expired' }
+      if (!isValidVerdict(verdict)) return { ok: false as const, error: 'bad-verdict' }
+      d.sample = applyVerdict(d.sample, segIndex, verdict)
+      return { ok: true as const }
+    },
+  )
+
+  registerHandler<{ draftId: string; verdicts?: Record<number, 'ad' | 'content'> }>(
+    'commitSample',
+    async (message) => {
+      const { draftId, verdicts } = message.payload
+      const d = getDraft(draftId)
+      if (!d) return { ok: false as const, error: 'draft-expired' }
+
+      let sample = d.sample
+      if (verdicts) {
+        for (const [k, v] of Object.entries(verdicts)) {
+          const idx = Number(k)
+          if (!Number.isInteger(idx) || !isValidVerdict(v)) continue
+          sample = applyVerdict(sample, idx, v)
+        }
+      }
+
+      // 落库前计算复核清单，供撤销误标指纹使用
+      const block = resolveSampleBlock(sample)
+      const rejected = block.filter((s) => resolveVerdict(s) === 'content')
+
+      await recordSample(sample)
+      const learn = await autoLearnFromSample(sample)
+
+      // 明确判为非广告的分片：若此前被误学入指纹库，必须同步撤销，
+      // 否则下次播放会把正常内容当广告跳掉
+      let revoked = 0
+      for (const s of rejected) {
+        if (await revokeFingerprint(s.url)) revoked++
+      }
+
+      drafts.delete(draftId)
+      logger.info(
+        '[hls] sample committed · auto-learn block:',
+        learn.total,
+        '· new fingerprints:',
+        learn.added,
+        '· revoked:',
+        revoked,
+      )
+      return { ok: true as const, learned: learn.added, total: learn.total, revoked }
+    },
+  )
+
+  registerHandler<{ draftId: string }>('cancelSampleDraft', async (message) => {
+    drafts.delete(message.payload.draftId)
+    return { ok: true as const }
   })
 
   // === 阶段 3: 统计 ===

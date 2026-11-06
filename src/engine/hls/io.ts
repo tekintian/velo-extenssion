@@ -136,7 +136,9 @@ export async function applyImport(
   if (imported.samples) {
     const importedSamples = imported.samples as AdSample[]
     if (strategy === 'replace') {
-      await clearSamples()
+      // 导入场景只清样本、不动指纹：导入包里的 learnedFingerprints 已在上方写入，
+      // 此处若连带撤销会把刚导入的指纹抹掉
+      await clearSamples(false)
       for (const s of importedSamples) await recordSample(s)
       result.samples = importedSamples.length
     } else {
