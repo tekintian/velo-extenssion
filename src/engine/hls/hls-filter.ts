@@ -12,7 +12,14 @@
  */
 
 import { detectAds } from './ad-detector'
-import { computeFingerprint, initFingerprint, learnFingerprint, lookupFingerprint } from './fingerprint'
+import {
+  computeFingerprint,
+  initFingerprint,
+  learnFingerprint,
+  lookupFingerprint,
+  lookupUserMarkedFingerprint,
+  hasUserMarkedFingerprints,
+} from './fingerprint'
 import { getSiteRule } from './hls-rules'
 import { isMasterPlaylist, parseMasterPlaylist, parsePlaylist } from './playlist-parser'
 import { rebuildPlaylist } from './playlist-rebuilder'
@@ -140,95 +147,113 @@ export async function processPlaylist(
 
   // 指纹库二次过滤：对未被标签信号命中的分片，取首 64KB SHA-256 查库
   // threshold=0 = 用户明确要求不过滤（detectAds 已早返回空，指纹库也不跑）
-  if (config.scoreThreshold > 0 && config.enableFingerprint && config.fingerprintMode !== 'off') {
-    await initFingerprint(config.remoteFingerprintsUrl)
+  //
+  // 两条放行条件（满足其一即执行指纹校验）：
+  //   1. enableFingerprint=true —— 用户开启完整指纹库（learned + remote 全来源）
+  //   2. 库中存在 user-marked 指纹 —— 用户主动保存样本标注的广告，是最强人工信号，
+  //      不应因总开关默认关闭而永不生效。此路径仅匹配 user-marked 来源，
+  //      不引入 remote / auto-learned 指纹的额外网络开销。
+  if (config.scoreThreshold > 0 && config.fingerprintMode !== 'off') {
+    const fpEnabled = config.enableFingerprint
+    // learned 库在本地 storage，加载无网络成本；remote 仅在 fpEnabled 时才需要
+    await initFingerprint(fpEnabled ? config.remoteFingerprintsUrl : '')
+    const userMarkedOnly = !fpEnabled && (await hasUserMarkedFingerprints())
 
-    // 多数派 origin（suspicious-only 模式判定跨域用）
-    const oc = new Map<string, number>()
-    for (const s of parsed.segments) {
-      try {
-        const u = new URL(s.url)
-        oc.set(u.origin, (oc.get(u.origin) ?? 0) + 1)
-      } catch {
-        // ignore
-      }
-    }
-    let majO: string | null = null
-    for (const [o, c] of oc) {
-      if (majO === null || c > (oc.get(majO) ?? 0)) majO = o
-    }
+    if (fpEnabled || userMarkedOnly) {
+      // userMarkedOnly 模式收窄为 suspicious-only，避免 'all' 模式在未开总开关时
+      // 对每条分片发起网络请求
+      const effMode: 'all' | 'suspicious-only' = userMarkedOnly ? 'suspicious-only' : config.fingerprintMode
 
-    // 选候选：未被判广告 + 满足 suspicious 条件
-    const candidates = parsed.segments.filter((s) => {
-      if (detection.adSegments.has(s.index)) return false
-      if (config.fingerprintMode === 'all') return true
-      if (config.fingerprintMode === 'suspicious-only') {
-        if (s.discontinuity) return true
+      // 多数派 origin（suspicious-only 模式判定跨域用）
+      const oc = new Map<string, number>()
+      for (const s of parsed.segments) {
         try {
           const u = new URL(s.url)
-          if (majO && u.origin !== majO) return true
+          oc.set(u.origin, (oc.get(u.origin) ?? 0) + 1)
         } catch {
           // ignore
         }
       }
-      return false
-    })
-
-    const cap = Math.min(candidates.length, config.maxFingerprintPerPlaylist || 9999)
-    if (config.logToConsole && candidates.length > 0) {
-      logger.info('[HLS-AdFilter] fp pass:', config.fingerprintMode, 'candidates:', candidates.length, 'cap:', cap)
-    }
-
-    // 并行化：10 个一批
-    const batchSize = 10
-    for (let bi = 0; bi < cap; bi += batchSize) {
-      const batch = candidates.slice(bi, Math.min(bi + batchSize, cap))
-      const hashes = await Promise.all(batch.map((s) => computeFingerprint(s.url, authHeaders)))
-      for (let hi = 0; hi < batch.length; hi++) {
-        const hit = hashes[hi] ? lookupFingerprint(hashes[hi]!) : null
-        if (hit && hit.isAd) {
-          detection.adSegments.add(batch[hi]!.index)
-          detection.reasons.set(batch[hi]!.index, [
-            `fingerprint-match(${hit.adName ?? hit.source ?? 'lib'})`,
-          ])
-        }
+      let majO: string | null = null
+      for (const [o, c] of oc) {
+        if (majO === null || c > (oc.get(majO) ?? 0)) majO = o
       }
-    }
 
-    // 重算 report（指纹可能新增广告）
-    let ad2 = 0
-    let con2 = 0
-    for (const s of parsed.segments) {
-      if (detection.adSegments.has(s.index)) ad2 += s.duration
-      else con2 += s.duration
-    }
-    detection.report = {
-      ...detection.report,
-      ads: detection.adSegments.size,
-      adDuration: Math.round(ad2),
-      contentDuration: Math.round(con2),
-    }
+      // 选候选：未被判广告 + 满足 suspicious 条件
+      const candidates = parsed.segments.filter((s) => {
+        if (detection.adSegments.has(s.index)) return false
+        if (effMode === 'all') return true
+        if (effMode === 'suspicious-only') {
+          if (s.discontinuity) return true
+          try {
+            const u = new URL(s.url)
+            if (majO && u.origin !== majO) return true
+          } catch {
+            // ignore
+          }
+        }
+        return false
+      })
 
-    // auto-learn：对已被判广告的分片记录指纹入库
-    if (config.autoLearnFingerprints) {
-      const learnList = parsed.segments.filter((s) => detection.adSegments.has(s.index))
-      const lcap = Math.min(learnList.length, config.maxFingerprintPerPlaylist || 9999)
-      let learnedNew = 0
-      for (let lb = 0; lb < lcap; lb += batchSize) {
-        const lbatch = learnList.slice(lb, Math.min(lb + batchSize, lcap))
-        const lhashes = await Promise.all(lbatch.map((s) => computeFingerprint(s.url, authHeaders)))
-        for (let lh = 0; lh < lbatch.length; lh++) {
-          if (lhashes[lh]) {
-            const added = await learnFingerprint(lhashes[lh]!, {
-              adName: `auto:${appliedRule ? appliedRule.id : 'unknown'}`,
-              source: 'auto-learned',
-            })
-            if (added) learnedNew++
+      const cap = Math.min(candidates.length, config.maxFingerprintPerPlaylist || 9999)
+      if (config.logToConsole && candidates.length > 0) {
+        logger.info('[HLS-AdFilter] fp pass:', fpEnabled ? config.fingerprintMode : 'user-marked-only', 'candidates:', candidates.length, 'cap:', cap)
+      }
+
+      // 并行化：10 个一批
+      const batchSize = 10
+      for (let bi = 0; bi < cap; bi += batchSize) {
+        const batch = candidates.slice(bi, Math.min(bi + batchSize, cap))
+        const hashes = await Promise.all(batch.map((s) => computeFingerprint(s.url, authHeaders)))
+        for (let hi = 0; hi < batch.length; hi++) {
+          const h = hashes[hi]
+          if (!h) continue
+          // 未开总开关时只认用户主动标注的指纹，避免误用 auto-learned 噪声
+          const hit = fpEnabled ? lookupFingerprint(h) : await lookupUserMarkedFingerprint(h)
+          if (hit && hit.isAd) {
+            detection.adSegments.add(batch[hi]!.index)
+            detection.reasons.set(batch[hi]!.index, [
+              `fingerprint-match(${hit.adName ?? hit.source ?? 'lib'})`,
+            ])
           }
         }
       }
-      if (config.logToConsole && learnedNew > 0) {
-        logger.info('[HLS-AdFilter] auto-learned', learnedNew, 'new ad fingerprints')
+
+      // 重算 report（指纹可能新增广告）
+      let ad2 = 0
+      let con2 = 0
+      for (const s of parsed.segments) {
+        if (detection.adSegments.has(s.index)) ad2 += s.duration
+        else con2 += s.duration
+      }
+      detection.report = {
+        ...detection.report,
+        ads: detection.adSegments.size,
+        adDuration: Math.round(ad2),
+        contentDuration: Math.round(con2),
+      }
+
+      // auto-learn：对已被判广告的分片记录指纹入库
+      if (config.autoLearnFingerprints) {
+        const learnList = parsed.segments.filter((s) => detection.adSegments.has(s.index))
+        const lcap = Math.min(learnList.length, config.maxFingerprintPerPlaylist || 9999)
+        let learnedNew = 0
+        for (let lb = 0; lb < lcap; lb += batchSize) {
+          const lbatch = learnList.slice(lb, Math.min(lb + batchSize, lcap))
+          const lhashes = await Promise.all(lbatch.map((s) => computeFingerprint(s.url, authHeaders)))
+          for (let lh = 0; lh < lbatch.length; lh++) {
+            if (lhashes[lh]) {
+              const added = await learnFingerprint(lhashes[lh]!, {
+                adName: `auto:${appliedRule ? appliedRule.id : 'unknown'}`,
+                source: 'auto-learned',
+              })
+              if (added) learnedNew++
+            }
+          }
+        }
+        if (config.logToConsole && learnedNew > 0) {
+          logger.info('[HLS-AdFilter] auto-learned', learnedNew, 'new ad fingerprints')
+        }
       }
     }
   }

@@ -186,12 +186,18 @@ function Popup() {
       alert(i18n('popup_playback_read_fail') + ': ' + (pb.error || i18n('popup_play_video_first')))
       return
     }
-    const r = await request<{ ok?: boolean; error?: string }>('captureSample', {
+    const r = await request<{ ok?: boolean; error?: string; learned?: number; total?: number }>('captureSample', {
       tabId: tab.id,
       currentTime: pb.currentTime,
     })
     if (r?.ok) {
-      alert(i18n('popup_sample_saved', [String(Math.round(pb.currentTime))]))
+      alert(
+        i18n('popup_sample_saved', [
+          String(Math.round(pb.currentTime)),
+          String(r.learned ?? 0),
+          String(r.total ?? 0),
+        ]),
+      )
     } else {
       const err = r?.error
       const msg =

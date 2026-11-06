@@ -34,7 +34,7 @@ function SamplesPage() {
       if (!tab?.id) throw new Error(i18n('options_no_active_tab'))
       const pb = await queryPlayback(tab.id)
       if (!pb.ok) throw new Error(i18n('options_playback_read_fail') + ': ' + (pb.error || i18n('popup_play_video_first')))
-      const result = await request<{ ok?: boolean; error?: string }>('captureSample', {
+      const result = await request<{ ok?: boolean; error?: string; learned?: number; total?: number }>('captureSample', {
         tabId: tab.id,
         currentTime: pb.currentTime,
       })
@@ -47,7 +47,15 @@ function SamplesPage() {
           : i18n('popup_capture_fail', [err ?? i18n('popup_unknown_error')])
         throw new Error(msg)
       }
-      alert(i18n('options_sample_captured') + ` (t=${Math.round(pb.currentTime)}s)`)
+      alert(
+        i18n('options_sample_captured') +
+          ` (t=${Math.round(pb.currentTime)}s) · ` +
+          i18n('popup_sample_saved', [
+            String(Math.round(pb.currentTime)),
+            String(result.learned ?? 0),
+            String(result.total ?? 0),
+          ]),
+      )
       void loadSamples()
     } catch (e) { alert(String(e)) }
   }

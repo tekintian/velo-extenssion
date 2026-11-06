@@ -13,7 +13,7 @@
 
 import { persistentStorage } from '@/lib/storage'
 import type { Segment } from './types'
-import { computeFingerprint, learnFingerprint } from './fingerprint'
+import { computeFingerprint, learnFingerprint, USER_MARKED_SOURCE } from './fingerprint'
 
 const KEY = 'hlsAdSamples'
 const MAX = 100
@@ -39,6 +39,14 @@ export interface AdSample {
   readonly appliedRule: { id: string; name: string } | null
   readonly report: { ads: number; total: number; adDuration: number } | null
   readonly window: SampleSegment[]
+  /**
+   * 当前片所属的完整 discontinuity 块
+   *
+   * 历史样本无此字段：窗口只覆盖 currentSegIndex ± N，若广告块长度超过窗口，
+   * auto-learn 会把块边界截断在窗口外，学到不完整的广告指纹集合。
+   * 新样本直接存完整块，auto-learn 优先使用它。
+   */
+  readonly block?: SampleSegment[]
   note: string
 }
 
@@ -79,6 +87,56 @@ export function findSegIndexAtTime(segments: readonly Segment[], currentTime: nu
 }
 
 /**
+ * 计算某个分片所属的完整 discontinuity 块
+ *
+ * 块定义：从当前片往前找到最近的 discontinuity 分片（含），
+ * 往后直到下一个 discontinuity 分片之前（不含）。
+ * 当前片自身带 discontinuity 时，它就是块起点。
+ *
+ * @returns 块内分片的闭区间 [start, end]；segments 为空时返回 null
+ */
+export function computeDiscontinuityBlock(
+  segments: readonly { discontinuity: boolean }[],
+  index: number,
+): { start: number; end: number } | null {
+  if (!segments || segments.length === 0) return null
+  if (index < 0 || index >= segments.length) return null
+
+  let start = index
+  for (let i = index - 1; i >= 0; i--) {
+    if (segments[i]!.discontinuity) {
+      start = i
+      break
+    }
+    start = i
+  }
+  let end = index
+  for (let i = index + 1; i < segments.length; i++) {
+    if (segments[i]!.discontinuity) break
+    end = i
+  }
+  return { start, end }
+}
+
+function toSampleSegment(
+  segments: readonly Segment[],
+  i: number,
+  cur: number,
+  reasons: SampleReasons | undefined,
+): SampleSegment {
+  const s = segments[i]!
+  return {
+    index: s.index,
+    url: s.url,
+    duration: s.duration,
+    discontinuity: s.discontinuity,
+    seqNum: s.seqNum,
+    isCurrent: i === cur,
+    signals: readSignals(reasons, s.index),
+  }
+}
+
+/**
  * 捕获样本（纯函数，不碰 storage）
  *
  * @param segments     parsePlaylist 解析出的分片数组
@@ -104,17 +162,18 @@ export function captureSample(
   const end = Math.min(segments.length - 1, cur + N)
   const win: SampleSegment[] = []
   for (let i = start; i <= end; i++) {
-    const s = segments[i]!
-    win.push({
-      index: s.index,
-      url: s.url,
-      duration: s.duration,
-      discontinuity: s.discontinuity,
-      seqNum: s.seqNum,
-      isCurrent: i === cur,
-      signals: readSignals(reasons, s.index),
-    })
+    win.push(toSampleSegment(segments, i, cur, reasons))
   }
+
+  // 完整 discontinuity 块：脱离窗口限制，供 auto-learn 学全广告块
+  const blk = computeDiscontinuityBlock(segments, cur)
+  const block: SampleSegment[] = []
+  if (blk) {
+    for (let i = blk.start; i <= blk.end; i++) {
+      block.push(toSampleSegment(segments, i, cur, reasons))
+    }
+  }
+
   return {
     id: `sample-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     ts: Date.now(),
@@ -125,6 +184,7 @@ export function captureSample(
     appliedRule: report?.appliedRule ?? null,
     report: report ? { ads: report.ads, total: report.total, adDuration: report.adDuration } : null,
     window: win,
+    ...(block.length > 0 ? { block } : {}),
     note: '',
   }
 }
@@ -187,52 +247,61 @@ export async function getSampleCount(): Promise<number> {
 }
 
 /**
+ * auto-learn 结果
+ *
+ * `total` 为块内成功算出指纹的分片总数，`added` 为本次新入库数。
+ * 两者不等通常意味着这些分片已被检测阶段自动入库（fingerprint-match 后重复学习），
+ * 显式暴露给 UI，避免用户误以为「保存了样本但自学习没生效」。
+ */
+export interface AutoLearnResult {
+  readonly added: number
+  readonly total: number
+}
+
+/**
  * auto-learn：把样本里"当前片所在 discontinuity 块"的全部分片指纹入库
  *
  * 算法（移植自 NDM samples.js autoLearnFromSample）:
- *   1. 找当前片
- *   2. 扩展当前片所在的 discontinuity 块：往前到 disc 边界（含），往后到下一个 disc（不含）
- *   3. 对块内每片算指纹 + learnFingerprint
+ *   1. 定位当前片所属的完整 discontinuity 块
+ *      - 优先用 sample.block（捕获时已按全量 segments 计算，不受窗口截断）
+ *      - 历史样本无 block 时回退：在 window 内扩展，边界可能被截断
+ *   2. 对块内每片算指纹 + learnFingerprint(source='user-marked')
  *
- * @returns 新入库的指纹数
+ * user-marked 指纹独立于 enableFingerprint 开关参与匹配（见 hls-filter），
+ * 保证用户主动标注的广告后续必然被识别。
  */
-export async function autoLearnFromSample(sample: AdSample): Promise<number> {
-  if (!sample || !sample.window) return 0
+export async function autoLearnFromSample(sample: AdSample): Promise<AutoLearnResult> {
+  if (!sample) return { added: 0, total: 0 }
 
-  const curIdx = sample.window.findIndex((w) => w.isCurrent)
-  if (curIdx < 0) return 0
-
-  // 扩展当前片所在的 discontinuity 块
-  let blockStart = curIdx
-  if (!sample.window[curIdx]!.discontinuity) {
-    for (let i = curIdx - 1; i >= 0; i--) {
-      if (sample.window[i]!.discontinuity) {
-        blockStart = i
-        break
-      }
-    }
-  }
-  let blockEnd = curIdx
-  for (let i = curIdx + 1; i < sample.window.length; i++) {
-    if (sample.window[i]!.discontinuity) break
-    blockEnd = i
+  let block: readonly SampleSegment[]
+  if (sample.block && sample.block.length > 0) {
+    block = sample.block
+  } else if (sample.window && sample.window.length > 0) {
+    // 历史样本回退路径：窗口内扩展
+    const curIdx = sample.window.findIndex((w) => w.isCurrent)
+    if (curIdx < 0) return { added: 0, total: 0 }
+    const blk = computeDiscontinuityBlock(sample.window, curIdx)
+    if (!blk) return { added: 0, total: 0 }
+    block = sample.window.slice(blk.start, blk.end + 1)
+  } else {
+    return { added: 0, total: 0 }
   }
 
-  let learned = 0
-  for (let j = blockStart; j <= blockEnd; j++) {
-    const w = sample.window[j]!
+  let added = 0
+  let total = 0
+  for (const w of block) {
     try {
       const hash = await computeFingerprint(w.url)
-      if (hash) {
-        const added = await learnFingerprint(hash, {
-          adName: `user-sample:${sample.pageHost || '?'}`,
-          source: 'user-marked',
-        })
-        if (added) learned++
-      }
+      if (!hash) continue
+      total++
+      const isNew = await learnFingerprint(hash, {
+        adName: `user-sample:${sample.pageHost || '?'}`,
+        source: USER_MARKED_SOURCE,
+      })
+      if (isNew) added++
     } catch {
       // ignore
     }
   }
-  return learned
+  return { added, total }
 }

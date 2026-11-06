@@ -258,10 +258,16 @@
     "message": "Please play the video first"
   },
   "popup_sample_saved": {
-    "message": "✓ Ad sample saved (t=$time$s), fingerprint auto-learned",
+    "message": "✓ Ad sample saved (t=$time$s), $total$ block fingerprints learned ($added$ new)",
     "placeholders": {
       "time": {
         "content": "$1"
+      },
+      "added": {
+        "content": "$2"
+      },
+      "total": {
+        "content": "$3"
       }
     }
   },

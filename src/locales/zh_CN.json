@@ -258,10 +258,16 @@
     "message": "请先播放视频"
   },
   "popup_sample_saved": {
-    "message": "✓ 已保存广告样本 (t=$time$s)，分片指纹已自动学习",
+    "message": "✓ 已保存广告样本 (t=$time$s)，广告块 $total$ 个分片指纹已入库（新增 $added$ 个）",
     "placeholders": {
       "time": {
         "content": "$1"
+      },
+      "added": {
+        "content": "$2"
+      },
+      "total": {
+        "content": "$3"
       }
     }
   },

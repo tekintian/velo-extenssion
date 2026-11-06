@@ -11,6 +11,9 @@ export {
   clearUrlCache,
   computeFingerprint,
   lookupFingerprint,
+  lookupUserMarkedFingerprint,
+  hasUserMarkedFingerprints,
   learnFingerprint,
   getLearnedCount,
+  USER_MARKED_SOURCE,
 } from '@engine/shared/fingerprint'

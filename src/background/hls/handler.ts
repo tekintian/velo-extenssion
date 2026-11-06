@@ -333,9 +333,14 @@ export function registerHlsHandlers(): void {
     }
     if (!sample) return { ok: false as const, error: 'sample-out-of-range' }
     await recordSample(sample)
-    const learned = await autoLearnFromSample(sample)
-    logger.info('[hls] sample captured + auto-learned', learned, 'fingerprints')
-    return { ok: true as const }
+    const learn = await autoLearnFromSample(sample)
+    logger.info(
+      '[hls] sample captured · auto-learn block:',
+      learn.total,
+      '· new fingerprints:',
+      learn.added,
+    )
+    return { ok: true as const, learned: learn.added, total: learn.total }
   })
 
   // === 阶段 3: 统计 ===

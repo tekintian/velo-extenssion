@@ -33,6 +33,9 @@ import {
   initFingerprint,
   learnFingerprint,
   lookupFingerprint,
+  lookupUserMarkedFingerprint,
+  hasUserMarkedFingerprints,
+  USER_MARKED_SOURCE,
   clearLearned,
   clearUrlCache,
   getLearnedCount,
@@ -99,5 +102,41 @@ describe('fingerprint', () => {
     const countBefore = getLearnedCount()
     await learnFingerprint('count-test-hash', { adName: 'ad', source: 's' })
     expect(getLearnedCount()).toBe(countBefore + 1)
+  })
+
+  it('⑥ lookupUserMarkedFingerprint 只命中 user-marked 来源', async () => {
+    await initFingerprint()
+    await clearLearned()
+
+    await learnFingerprint('um-hit', { adName: 'user-ad', source: USER_MARKED_SOURCE })
+    await learnFingerprint('um-miss', { adName: 'auto-ad', source: 'auto-learned' })
+
+    const hit = await lookupUserMarkedFingerprint('um-hit')
+    expect(hit?.isAd).toBe(true)
+    expect(hit?.source).toBe(USER_MARKED_SOURCE)
+
+    // auto-learned 不算用户标注，避免未开总开关时被机器噪声误判
+    expect(await lookupUserMarkedFingerprint('um-miss')).toBeNull()
+    expect(await lookupUserMarkedFingerprint('not-exist')).toBeNull()
+  })
+
+  it('⑦ hasUserMarkedFingerprints 反映库中是否存在用户标注', async () => {
+    await initFingerprint()
+    await clearLearned()
+    expect(await hasUserMarkedFingerprints()).toBe(false)
+
+    await learnFingerprint('only-auto', { adName: 'a', source: 'auto-learned' })
+    expect(await hasUserMarkedFingerprints()).toBe(false)
+
+    await learnFingerprint('with-user', { adName: 'u', source: USER_MARKED_SOURCE })
+    expect(await hasUserMarkedFingerprints()).toBe(true)
+  })
+
+  it('⑧ hasUserMarkedFingerprints 无需先 initFingerprint（自动加载 learned 库）', async () => {
+    await clearLearned()
+    await learnFingerprint('lazy-user', { adName: 'u', source: USER_MARKED_SOURCE })
+    // 模拟新会话：不调用 init，直接查询也应命中
+    expect(await hasUserMarkedFingerprints()).toBe(true)
+    expect((await lookupUserMarkedFingerprint('lazy-user'))?.isAd).toBe(true)
   })
 })
