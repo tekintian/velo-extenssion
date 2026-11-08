@@ -98,6 +98,8 @@ export async function sendToDownloadClient(
           merge_format: isM3u8 ? cfg.mergeFormat : '',
           extra_headers: undefined as Record<string, string> | undefined,
         },
+        page_url: extra?.pageUrl,
+        page_title: extra?.title,
       }
       await pushClientInstance.push(msg)
       logger.info('[download] pushed via PushClient:', url.slice(0, 80))
@@ -588,6 +590,7 @@ export async function sendToVeloM3u8(
     pageUrl?: string | undefined
     cookies?: string | undefined
     requestHeaders?: Record<string, string> | undefined
+    title?: string | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
   const wsUrl = cfg.veloUrl
@@ -782,6 +785,7 @@ function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined,
   requestBody?: string | undefined
   cookies?: string | undefined
   requestHeaders?: Record<string, string> | undefined
+  title?: string | undefined
 }, headerLevel?: HeaderForwardLevel): void {
   const isM3u8 = /\.m3u8/i.test(url)
     || /mpegurl/i.test(extra?.contentType ?? '')
@@ -808,6 +812,8 @@ function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined,
       merge_format: isM3u8 ? 'mp4' : undefined as string | undefined,
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
   }
   const payload = JSON.stringify(msg)
   logger.info(
@@ -824,6 +830,7 @@ function veloWsSendM3u8(ws: WebSocket, m3u8Text: string, baseUrl: string, fileNa
   pageUrl?: string | undefined
   cookies?: string | undefined
   requestHeaders?: Record<string, string> | undefined
+  title?: string | undefined
 }, headerLevel?: HeaderForwardLevel): void {
   const msg = {
     version: 1,
@@ -839,6 +846,8 @@ function veloWsSendM3u8(ws: WebSocket, m3u8Text: string, baseUrl: string, fileNa
       merge_format: 'mp4',
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
   }
   const payload = JSON.stringify(msg)
   logger.info('[download] velo push_m3u8 →', `${m3u8Text.length} chars, baseUrl=${baseUrl}`, 'headers:', msg.headers ? Object.keys(msg.headers) : 'none')
@@ -860,6 +869,7 @@ export async function sendToVeloDash(
     pageUrl?: string | undefined
     cookies?: string | undefined
     requestHeaders?: Record<string, string> | undefined
+    title?: string | undefined
   },
 ): Promise<{ success: boolean; message?: string }> {
   const wsUrl = cfg.veloUrl
@@ -902,6 +912,7 @@ function veloWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, fileN
   pageUrl?: string | undefined
   cookies?: string | undefined
   requestHeaders?: Record<string, string> | undefined
+  title?: string | undefined
 }, headerLevel?: HeaderForwardLevel): void {
   const msg = {
     version: 1,
@@ -919,6 +930,8 @@ function veloWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, fileN
       merge_format: 'mp4',
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
   }
   const payload = JSON.stringify(msg)
   logger.info('[download] velo push_dash → video:', videoUrl.slice(0, 80), 'audio:', audioUrl.slice(0, 80), 'headers:', msg.headers ? Object.keys(msg.headers) : 'none')
@@ -986,6 +999,8 @@ export async function pushHls(
       merge_format: options?.mergeFormat ?? _cachedConfig.mergeFormat ?? 'ts',
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
   }
   await pushClientInstance.push(msg)
 }
@@ -1018,6 +1033,8 @@ export async function pushUrl(
       merge_format: isM3u8 ? (options?.mergeFormat ?? _cachedConfig.mergeFormat ?? 'ts') : '',
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
   }
   await pushClientInstance.push(msg)
 }
@@ -1048,6 +1065,8 @@ export async function pushNormal(
       merge_format: isM3u8 ? (_cachedConfig.mergeFormat ?? 'ts') : '',
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
   }
   await pushClientInstance.push(msg)
 }

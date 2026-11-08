@@ -78,6 +78,10 @@ export interface PushMessage {
   /** 请求体（移植自 NDM bg.js V.I __0NeatPostData9__ 字段），非 GET/HEAD 时由桌面端直连下载器执行 */
   post_data?: string
   headers?: Record<string, string>
+  /** 推送来源页面地址（原始页面 URL，非仅 Referer 头）：桌面端落库并在详情展示「引用地址」 */
+  page_url?: string
+  /** 推送来源页面标题：桌面端落库并在详情展示「页面标题」 */
+  page_title?: string
   options: PushOptions
 }
 

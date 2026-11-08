@@ -77,6 +77,8 @@ async function dispatchCleanedM3u8(
       merge_format: 'ts',
       extra_headers: undefined as Record<string, string> | undefined,
     },
+    page_url: finalPageUrl || undefined,
+    page_title: ctx.pageTitle || undefined,
   }
   if (pushClient) {
     try {
@@ -302,6 +304,8 @@ export function registerMediaHandlers(): void {
             merge_format: 'mp4',
             extra_headers: undefined as Record<string, string> | undefined,
           },
+          page_url: finalPageUrl || undefined,
+          page_title: sender.tab?.title || undefined,
         }
         await pushClient.push(msg)
         logger.info('[media] pushed DASH via PushClient: video=', videoUrl.slice(0, 80), 'audio=', audioUrl.slice(0, 80))

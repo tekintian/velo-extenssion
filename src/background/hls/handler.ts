@@ -898,6 +898,8 @@ export function registerHlsHandlers(): void {
               merge_format: 'mp4',
               extra_headers: undefined as Record<string, string> | undefined,
             },
+            page_url: downloadExtra.pageUrl || undefined,
+            page_title: (rootTabTitle || ctx.pageTitle) || undefined,
           }
           await pushClient.push(pushMsg)
           logger.info('[hls] pushed cleaned m3u8 via PushClient')
