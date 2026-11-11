@@ -18,6 +18,8 @@
 
 import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
+import { i18n } from '@/lib/i18n'
+import { PushUnconfirmedError } from '@/background/push-client'
 import { extractBaseName, isBadName } from '@/lib/naming'
 import { persistentStorage, settingsStore } from '@/lib/storage'
 import type { BackupPayload } from '@/engine/hls/io'
@@ -901,10 +903,27 @@ export function registerHlsHandlers(): void {
             page_url: downloadExtra.pageUrl || undefined,
             page_title: (rootTabTitle || ctx.pageTitle) || undefined,
           }
-          await pushClient.push(pushMsg)
+          const pushed = await pushClient.push(pushMsg)
+          if (pushed.queued) {
+            logger.info('[hls] cleaned m3u8 queued (velo offline)')
+            return { ok: true as const, filename: outputName, queued: true }
+          }
+          if (pushed.pending) {
+            logger.info('[hls] cleaned m3u8 awaiting user confirm in velo')
+            return { ok: true as const, filename: outputName, pending: true }
+          }
           logger.info('[hls] pushed cleaned m3u8 via PushClient')
           return { ok: true as const, filename: outputName }
         } catch (e) {
+          if (e instanceof PushUnconfirmedError) {
+            logger.warn('[hls] push_m3u8 unconfirmed:', e.message)
+            return { ok: false as const, unconfirmed: true, error: i18n('push_unconfirmed') }
+          }
+          // 桌面端明确拒绝：客户端已是 velo 时不再回退（回退等于向同一端重推）
+          if (cfg.client === 'velo') {
+            logger.warn('[hls] push_m3u8 rejected:', (e as Error).message)
+            return { ok: false as const, error: (e as Error).message }
+          }
           logger.warn('[hls] PushClient push_m3u8 failed, falling back to cfg.client:', (e as Error).message)
         }
       }
@@ -936,7 +955,14 @@ export function registerHlsHandlers(): void {
       // velo 模式：直接推送 cleaned m3u8 文本（push_m3u8），无需 data URL 编码
       if (cfg.client === 'velo') {
         const r = await sendToVeloM3u8(ctx.cleaned, ctx.baseUrl, outputName, cfg, downloadExtra)
-        return { ok: r.success as boolean, filename: outputName, ...(r.message ? { error: r.message } : {}) }
+        return {
+          ok: r.success as boolean,
+          filename: outputName,
+          ...(r.queued ? { queued: true } : {}),
+          ...(r.pending ? { pending: true } : {}),
+          ...(r.unconfirmed ? { unconfirmed: true } : {}),
+          ...(r.message ? { error: r.message } : {}),
+        }
       }
 
       // native 模式：浏览器原生下载（仅在无 PushClient 且 cfg.client=native 时到达）

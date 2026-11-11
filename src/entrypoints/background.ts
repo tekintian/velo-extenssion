@@ -3,7 +3,7 @@ import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
 import { initMessageRouter, registerHandler } from '@/background/messaging/router'
 import { PairingManager, type ProbeResult } from '@/background/pairing'
-import { createPushClient } from '@/background/push-client'
+import { createPushClient, PushUnconfirmedError } from '@/background/push-client'
 import { startSniffer, setM3u8ProcessHandler, getMediaItems, resolveHlsDelegation } from '@/background/media/sniffer'
 import { setPushClient, pushHls, pushNormal, initCachedDownloadConfig, updateCachedDownloadConfig, getCachedDownloadConfig } from '@/background/media/download-client'
 import type { DownloadClientConfig } from '@/background/media/types'
@@ -14,8 +14,8 @@ import { registerDashHandlers } from '@/background/dash/handler'
 import { loadRemoteCacheFromStorage } from '@/engine/hls/hls-rules'
 import { migrateAdFilterKeys } from '@engine/shared/storage'
 import { recordStats } from '@/engine/hls/stats'
-import { DEFAULT_CONFIG as DEFAULT_SDOWN_CONFIG, STORAGE_KEYS, type VeloConfig } from '@/types'
-import { configStore, persistentStorage, settingsStore } from '@/lib/storage'
+import { DEFAULT_PORT, STORAGE_KEYS } from '@/types'
+import { persistentStorage, settingsStore } from '@/lib/storage'
 import type { MediaDescriptor, Settings } from '@/types'
 import { extractBaseName } from '@/lib/naming'
 import { initSeedSitesIfNeeded } from '@/engine/hls/hls-sites'
@@ -47,7 +47,6 @@ export default defineBackground({
 })
 
 let pushClient: ReturnType<typeof createPushClient> | null = null
-let config: VeloConfig = { ...DEFAULT_SDOWN_CONFIG }
 
 function registerHandlers(): void {
   registerHlsHandlers()
@@ -65,7 +64,8 @@ function registerHandlers(): void {
   })
 
   registerHandler('velo-get-status', async () => {
-    return { paired: !!pushClient, config }
+    const pairing = new PairingManager()
+    return { paired: !!pushClient, pairing: await pairing.getPairing() }
   })
 
   // === task #13: MSE 媒体用户提示 UI ===
@@ -143,54 +143,6 @@ function registerHandlers(): void {
     return { ok: true, visible }
   })
 
-  registerHandler<{ cleaned: string; baseUrl: string; pageUrl?: string }>('velo-push-filtered-m3u8', async (message) => {
-    const { cleaned, baseUrl, pageUrl } = message.payload
-    if (!cleaned || !baseUrl) return { ok: false, error: 'missing cleaned or baseUrl' }
-
-    try {
-      const descriptor: MediaDescriptor = {
-        url: baseUrl,
-        pageUrl: pageUrl ?? '',
-        method: 'GET',
-        ext: '.m3u8',
-        mime: 'application/vnd.apple.mpegurl',
-        contentLength: cleaned.length,
-        contentType: 'application/vnd.apple.mpegurl',
-        contentDisposition: '',
-        headers: {},
-      }
-      // P0 修复：content script 推送的过滤后 m3u8 也需携带认证信息
-      const effectivePageUrl = pageUrl || baseUrl
-      let cookies = ''
-      try {
-        const cookieList = await chrome.cookies.getAll({ url: baseUrl })
-        if (cookieList.length > 0) {
-          cookies = cookieList.map((c) => `${c.name}=${c.value}`).join('; ')
-        }
-      } catch { /* ignore */ }
-      const dlCfg2 = getCachedDownloadConfig()
-      await pushHls(descriptor, cleaned, { mergeFormat: dlCfg2.mergeFormat }, { pageUrl: effectivePageUrl, cookies })
-      logger.info('AdClear filtered m3u8 pushed to desktop:', baseUrl.slice(0, 80))
-      return { ok: true }
-    } catch (e) {
-      logger.error('Push AdClear filtered m3u8 failed:', (e as Error).message)
-      return { ok: false, error: (e as Error).message }
-    }
-  })
-
-  registerHandler('velo-download-m3u8', async (_message, sender) => {
-    logger.info('Badge download request, tab:', sender.tab?.id)
-    return { ok: true }
-  })
-
-  registerHandler('velo-ping', async () => {
-    return { ok: true, version: chrome.runtime.getManifest().version }
-  })
-
-  registerHandler('velo-get-config', async () => {
-    return config
-  })
-
   registerHandler('getExtensionEnabled', async () => {
     const val = await persistentStorage.get<{ enabled: boolean }>('extensionGlobalConfig')
     return { enabled: val?.enabled ?? true }
@@ -202,23 +154,19 @@ function registerHandlers(): void {
     return { ok: true, enabled }
   })
 
-  registerHandler<{ config: Partial<VeloConfig> }>('velo-save-config', async (message) => {
-    const newConfig = message.payload.config
-    if (newConfig) {
-      config = { ...config, ...newConfig }
-      await configStore.set(config)
-    }
-    return { ok: true }
+  registerHandler('velo-get-pairing', async () => {
+    const pairing = new PairingManager()
+    return { pairing: await pairing.getPairing() }
   })
 
   registerHandler<{ token?: string; port?: number }>('velo-save-pairing', async (message) => {
     const { token, port } = message.payload
     const pairing = new PairingManager()
-    await pairing.savePairing(token ?? '', port ?? DEFAULT_SDOWN_CONFIG.port)
+    await pairing.savePairing(token ?? '', port ?? DEFAULT_PORT)
     // 用户主动保存配对 → 清除自动连接冷却，立即建立连接
     await clearAutoConnectFailure()
     if (pushClient) pushClient.disconnect()
-    pushClient = createPushClient(config.pushChannel, port ?? DEFAULT_SDOWN_CONFIG.port, token ?? '')
+    pushClient = createPushClient(port ?? DEFAULT_PORT, token ?? '')
     pushClient.connect()
     setPushClient(pushClient)
     return { ok: true }
@@ -233,23 +181,6 @@ function registerHandlers(): void {
     }
     setPushClient(null)
     return { ok: true }
-  })
-
-  registerHandler<{ token?: string; port?: number }>('velo-validate-pairing', async (message) => {
-    const { token, port } = message.payload
-    const pairing = new PairingManager()
-    const valid = await pairing.validatePairing(token ?? '', port ?? DEFAULT_SDOWN_CONFIG.port)
-    return { ok: valid }
-  })
-
-  registerHandler<{ port?: number }>('velo-probe-client', async (message) => {
-    const pairing = new PairingManager()
-    const probePorts = [DEFAULT_SDOWN_CONFIG.port]
-    if (message.payload?.port && message.payload.port !== DEFAULT_SDOWN_CONFIG.port) {
-      probePorts.push(message.payload.port)
-    }
-    const result = await pairing.probeClient(probePorts)
-    return result as ProbeResult
   })
 
   registerHandler('velo-auto-connect', async () => {
@@ -271,9 +202,6 @@ async function initBackground(): Promise<void> {
   } catch (e) {
     logger.warn('[hls-sites] seed init failed:', (e as Error).message)
   }
-
-  const stored = await configStore.get<VeloConfig>()
-  config = { ...DEFAULT_SDOWN_CONFIG, ...stored }
 
   await initCachedDownloadConfig()
 
@@ -298,7 +226,7 @@ async function initBackground(): Promise<void> {
     const probeResult = await pairing.probeClient([pairingInfo.port])
     if (probeResult.available) {
       await clearAutoConnectFailure()
-      pushClient = createPushClient(config.pushChannel, probeResult.port, pairingInfo.token)
+      pushClient = createPushClient(probeResult.port, pairingInfo.token)
       pushClient.connect()
       setPushClient(pushClient)
     } else {
@@ -383,16 +311,17 @@ async function tryAutoConnect(force = false): Promise<ProbeResult & { connected?
     return { available: false, port: 0, tokenRequired: true, connected: false }
   }
   const pairing = new PairingManager()
-  const probePorts = [DEFAULT_SDOWN_CONFIG.port]
-  if (config.port && config.port !== DEFAULT_SDOWN_CONFIG.port) {
-    probePorts.push(config.port)
+  const savedPairing = await pairing.getPairing()
+  const probePorts = [DEFAULT_PORT]
+  if (savedPairing && savedPairing.port !== DEFAULT_PORT) {
+    probePorts.push(savedPairing.port)
   }
   const result = await pairing.probeClient(probePorts)
   if (result.available) {
     let token = ''
     if (result.tokenRequired) {
-      // 客户端要求 token：优先用用户配置的 token，其次用已保存的 pairing token
-      token = config.token || (await pairing.getPairing())?.token || ''
+      // 客户端要求 token：使用已保存的配对 token
+      token = savedPairing?.token ?? ''
       if (!token) {
         // 无可用 token → 用空 token 尝试握手，验证客户端是否实际需要 token
         // 有些客户端 tokenRequired=true 但空 token 也能通过（宽松模式）
@@ -407,7 +336,7 @@ async function tryAutoConnect(force = false): Promise<ProbeResult & { connected?
     await clearAutoConnectFailure()
     await pairing.savePairing(token, result.port)
     if (pushClient) pushClient.disconnect()
-    pushClient = createPushClient(config.pushChannel, result.port, token)
+    pushClient = createPushClient(result.port, token)
     pushClient.connect()
     setPushClient(pushClient)
     logger.info('Auto-connected to Velo client on port', result.port, 'tokenRequired:', result.tokenRequired, 'token:', token ? '***' : '(empty)')
@@ -642,18 +571,30 @@ async function veloProcessM3u8(
 
     if (resolved.mode === 'no-ads' || resolved.mode === 'disabled' || resolved.mode === 'passthrough') {
       if (dlCfg.autoPush) {
-        await pushHls(descriptor, mediaText, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
+        const pushed = await pushHls(descriptor, mediaText, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
+        if (pushed.queued) logger.info('[velo] HLS queued (velo offline)')
+        else if (pushed.pending) logger.info('[velo] HLS awaiting user confirm in velo')
       }
       return
     }
 
     if ('cleaned' in resolved && typeof resolved.cleaned === 'string') {
       if (dlCfg.autoPush) {
-        await pushHls(descriptor, resolved.cleaned, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
-        logger.info('[velo] HLS push completed')
+        const pushed = await pushHls(descriptor, resolved.cleaned, { mergeFormat: dlCfg.mergeFormat }, pushExtra)
+        if (pushed.queued) {
+          logger.info('[velo] HLS queued (velo offline)')
+        } else if (pushed.pending) {
+          logger.info('[velo] HLS awaiting user confirm in velo')
+        } else {
+          logger.info('[velo] HLS push completed')
+        }
       }
     }
   } catch (e) {
+    if (e instanceof PushUnconfirmedError) {
+      logger.warn('[velo] HLS push unconfirmed:', e.message)
+      return
+    }
     logger.error('[velo] HLS processing failed:', (e as Error).message)
   }
 }
@@ -674,8 +615,18 @@ async function handleContextMenu(info: chrome.contextMenus.OnClickData, tab: chr
     }
   } catch { /* ignore */ }
 
-  await pushNormal(
-    { url, pageUrl, method: 'GET', ext: '', mime: '', contentLength: 0, contentType: '', contentDisposition: '', headers: {} },
-    { pageUrl, cookies, title },
-  )
+  try {
+    const pushed = await pushNormal(
+      { url, pageUrl, method: 'GET', ext: '', mime: '', contentLength: 0, contentType: '', contentDisposition: '', headers: {} },
+      { pageUrl, cookies, title },
+    )
+    if (pushed.queued) logger.info('[contextMenu] push queued (velo offline):', url.slice(0, 80))
+    else if (pushed.pending) logger.info('[contextMenu] push awaiting user confirm in velo:', url.slice(0, 80))
+  } catch (e) {
+    if (e instanceof PushUnconfirmedError) {
+      logger.warn('[contextMenu] push unconfirmed:', e.message)
+      return
+    }
+    logger.error('[contextMenu] push failed:', (e as Error).message)
+  }
 }

@@ -62,10 +62,8 @@ export interface DownloadClientConfig {
   readonly rpcUrl: string
   /** aria2 RPC secret (可选) */
   readonly rpcSecret: string
-  /** velo push server 完整 URL (如 ws://127.0.0.1:16888/ws) */
-  readonly veloUrl: string
-  /** velo push server token (配对认证) */
-  readonly veloToken: string
+  /** NDM 兼容 WebSocket 完整 URL (如 ws://127.0.0.1:10007/download) */
+  readonly ndmUrl: string
   /** 请求头转发级别 */
   readonly headerLevel: HeaderForwardLevel
   /** 合并格式 */
@@ -79,8 +77,7 @@ export const DEFAULT_DOWNLOAD_CONFIG: DownloadClientConfig = {
   client: 'velo',
   rpcUrl: 'http://127.0.0.1:16816/jsonrpc',
   rpcSecret: '',
-  veloUrl: 'ws://127.0.0.1:16888/ws',
-  veloToken: 'ndm-auto',
+  ndmUrl: 'ws://127.0.0.1:10007/download',
   headerLevel: 'full',
   mergeFormat: 'ts',
   autoPush: false,

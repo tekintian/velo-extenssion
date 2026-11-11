@@ -1,12 +1,10 @@
 export const DEFAULT_PORT = 16888
-export const MAX_PORT_RETRIES = 10
 export const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000] as const
 export const QUEUE_MAX_SIZE = 100
 
 export const STORAGE_KEYS = {
   pairing: '_veloPairing',
   queue: '_veloPushQueue',
-  config: '_veloConfig',
   pairedExtensions: '_veloPairedExtensions',
   autoConnectFailAt: '_veloAutoConnectFailAt',
 } as const
@@ -35,26 +33,6 @@ export interface PairingInfo {
   token: string
   port: number
   paired_at: number
-}
-
-export interface VeloConfig {
-  port: number
-  token: string
-  pushChannel: 'ws' | 'http' | 'deep-link'
-  /** @deprecated 已迁移到 DownloadClientConfig.autoPush */
-  autoPush?: boolean
-  /** @deprecated 已迁移到 DownloadClientConfig.mergeFormat */
-  mergeFormat?: 'ts' | 'mp4' | 'mkv' | 'keep'
-  /** @deprecated 已迁移到 HLS 广告过滤配置 */
-  scoreThreshold?: number
-  /** @deprecated 已迁移到 HLS 广告过滤配置 */
-  enableFilter?: boolean
-}
-
-export const DEFAULT_CONFIG: VeloConfig = {
-  port: DEFAULT_PORT,
-  token: '',
-  pushChannel: 'ws',
 }
 
 export interface PushMessage {
@@ -116,9 +94,6 @@ export interface Settings {
   enableLogging: boolean
   enableAdSkip: boolean
   showPageBadge: boolean
-  downloadClient: 'aria2' | 'ndm' | 'velo' | 'native'
-  rpcUrl: string
-  rpcSecret: string
   hlsRunMode: 'smart' | 'manual'
   hlsLearnedSites: string[]
   hlsEnabledSites: string[]
@@ -131,9 +106,6 @@ export const DEFAULT_SETTINGS: Settings = {
   enableLogging: false,
   enableAdSkip: true,
   showPageBadge: true,
-  downloadClient: 'velo',
-  rpcUrl: 'http://127.0.0.1:16888/jsonrpc',
-  rpcSecret: '',
   hlsRunMode: 'smart',
   hlsLearnedSites: [],
   hlsEnabledSites: [],

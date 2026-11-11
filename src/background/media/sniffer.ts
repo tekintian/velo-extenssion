@@ -119,7 +119,7 @@ let lastPushedUrl = ''
 
 /** 下载推送状态载荷（background → content script 的 downloadPushed 消息） */
 interface DownloadPushPayload {
-  readonly status: 'pending' | 'success' | 'failed'
+  readonly status: 'pending' | 'success' | 'queued' | 'pending_confirm' | 'unconfirmed' | 'failed'
   readonly fileName: string
   readonly client: string
   readonly message?: string | undefined
@@ -728,13 +728,35 @@ export function startSniffer(): void {
                   priority: pushPriority,
                 },
               )
-              if (!result.success) {
+              if (result.unconfirmed) {
+                // 已发出但未确认：桌面端可能已建任务，保留去重状态，避免同一 URL 再次推送造成重复下载
+                notifyDownloadPushed(toastTabId, {
+                  status: 'unconfirmed',
+                  fileName: toastFileName,
+                  client: clientLabel,
+                  message: result.message,
+                })
+              } else if (!result.success) {
                 lastPushedUrl = ''
                 pushedUrlSet.delete(pushUrl)
                 pushedUrlSet.delete(details.url)
                 logger.warn('[sniffer] auto-push failed, clearing lastPushedUrl:', result.message, 'url:', pushUrl.slice(0, 80))
                 notifyDownloadPushed(toastTabId, {
                   status: 'failed',
+                  fileName: toastFileName,
+                  client: clientLabel,
+                  message: result.message,
+                })
+              } else if (result.queued) {
+                notifyDownloadPushed(toastTabId, {
+                  status: 'queued',
+                  fileName: toastFileName,
+                  client: clientLabel,
+                  message: result.message,
+                })
+              } else if (result.pending) {
+                notifyDownloadPushed(toastTabId, {
+                  status: 'pending_confirm',
                   fileName: toastFileName,
                   client: clientLabel,
                   message: result.message,
@@ -1456,12 +1478,34 @@ function handleFtpOrFileRequest(
             fileName,
             { contentType: contentType || undefined, pageUrl, cookies, title },
           )
-          if (!result.success) {
+          if (result.unconfirmed) {
+            // 已发出但未确认：桌面端可能已建任务，保留去重状态，避免同一 URL 再次推送造成重复下载
+            notifyDownloadPushed(tabId, {
+              status: 'unconfirmed',
+              fileName: toastFileName,
+              client: clientLabel,
+              message: result.message,
+            })
+          } else if (!result.success) {
             lastPushedUrl = ''
             pushedUrlSet.delete(details.url)
             logger.warn('[sniffer]', protocol, 'auto-push failed, clearing lastPushedUrl:', result.message)
             notifyDownloadPushed(tabId, {
               status: 'failed',
+              fileName: toastFileName,
+              client: clientLabel,
+              message: result.message,
+            })
+          } else if (result.queued) {
+            notifyDownloadPushed(tabId, {
+              status: 'queued',
+              fileName: toastFileName,
+              client: clientLabel,
+              message: result.message,
+            })
+          } else if (result.pending) {
+            notifyDownloadPushed(tabId, {
+              status: 'pending_confirm',
               fileName: toastFileName,
               client: clientLabel,
               message: result.message,

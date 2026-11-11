@@ -75,15 +75,6 @@ export const persistentStorage = {
   },
 }
 
-export const configStore = {
-  async get<T>(): Promise<T | undefined> {
-    return persistentStorage.get<T>('_veloConfig')
-  },
-  async set<T>(value: T): Promise<void> {
-    return persistentStorage.set('_veloConfig', value)
-  },
-}
-
 export const settingsStore = {
   async get<T>(): Promise<T | undefined> {
     return persistentStorage.get<T>('_adclearSettings')

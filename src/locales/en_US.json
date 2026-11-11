@@ -467,9 +467,6 @@
   "options_push_title": {
     "message": "Push Configuration"
   },
-  "options_push_channel_label": {
-    "message": "Push Channel"
-  },
   "options_merge_format_label": {
     "message": "Merge Format"
   },
@@ -628,8 +625,8 @@
   "options_rpc_secret_placeholder": {
     "message": "Leave empty for no key"
   },
-  "options_velo_url": {
-    "message": "Push URL"
+  "options_velo_port": {
+    "message": "Push port"
   },
   "options_velo_token": {
     "message": "Pairing token"
@@ -637,14 +634,17 @@
   "options_velo_token_placeholder": {
     "message": "Get from velo pairing QR code"
   },
+  "options_ndm_url": {
+    "message": "NDM connection URL"
+  },
   "options_ndm_hint": {
-    "message": "NDM desktop uses fixed address, no extra config needed. Ensure NDM desktop is running."
+    "message": "Defaults to NDM desktop at ws://127.0.0.1:10007/download. To use velo's built-in NDM-compatible channel instead, set ws://127.0.0.1:16888/download (16888 is velo's push port, configurable in velo settings)."
   },
   "options_native_hint": {
     "message": "Browser native download uses Chrome built-in download manager. Click the download button on media items."
   },
   "options_velo_hint": {
-    "message": "velo (Motrix Lite) receives pushes via WebSocket. Ensure velo is running with push server enabled (default ws://127.0.0.1:16888/ws). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
+    "message": "velo (Motrix Lite) receives pushes via WebSocket. Ensure velo is running with push server enabled (default port 16888, path /ws). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
   },
   "options_hls_delivery_mode": {
     "message": "Delivery Mode"
@@ -855,6 +855,18 @@
         "content": "$2"
       }
     }
+  },
+  "download_queued": {
+    "message": "velo is not connected; the task has been queued and will be sent automatically after reconnection"
+  },
+  "push_unconfirmed": {
+    "message": "Sent but no confirmation from velo (check the velo task list first to avoid duplicate downloads)"
+  },
+  "push_pending_confirm": {
+    "message": "velo received the request; the download starts after you confirm it in velo"
+  },
+  "push_client_not_ready": {
+    "message": "Push client is not ready (please complete pairing with velo on the download settings page)"
   },
   "options_test_input_title": {
     "message": "Test Parameters"

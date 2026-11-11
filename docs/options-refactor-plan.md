@@ -195,18 +195,17 @@ const CLIENTS: ClientDef[] = [
 
 #### 配置存储结构
 ```typescript
+// 实际落地结构（src/background/media/types.ts）
 interface DownloadClientConfig {
-  client: 'velo' | 'aria2' | 'ndm' | 'native'
-  // 支持完整URL配置，同时保留向后兼容的字段
-  clientUrl: string  // 完整URL，如 ws://127.0.0.1:16888/ws
-  // 以下字段在需要时从clientUrl解析，或作为fallback
-  rpcHost: string
-  rpcPort: number
+  client: 'ndm' | 'aria2' | 'velo' | 'native'
+  rpcUrl: string      // aria2 JSON-RPC 完整 URL
   rpcSecret: string
-  veloHost: string
-  veloPort: number
-  veloToken: string
+  ndmUrl: string      // NDM 兼容 WebSocket 完整 URL
+  headerLevel: 'full' | 'partial' | 'none'
+  mergeFormat: 'ts' | 'mp4' | 'mkv' | 'keep'
+  autoPush: boolean
 }
+// velo 推送端口与 Token 不在此结构内，唯一来源是配对存储 `_veloPairing`
 ```
 
 ### 4.2 HLS广告过滤配置（options-hls-filter）
@@ -276,7 +275,7 @@ interface HlsFilterUiConfig {
 ### 第一次复盘（需求遗漏检查）
 - [ ] 是否遗漏了任何HLS相关配置项？
 - [ ] 下载客户端的完整URL配置是否覆盖所有场景？
-- [ ] 推送配置是否完整（合并格式、自动推送、通道）？
+- [ ] 推送配置是否完整（合并格式、自动推送、端口与配对 Token）？
 - [ ] 页面导航是否直观？
 
 ### 第二次复盘（架构兼容性检查）

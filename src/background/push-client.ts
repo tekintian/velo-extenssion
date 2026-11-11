@@ -96,7 +96,35 @@ function notifyConnectionFailureWith3StepGuide(): void {
   }
 }
 
-export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: number, token: string) {
+/**
+ * push() 的返回值。
+ *
+ * `queued=true` 表示当前没有可用连接，消息已进入持久化离线队列，
+ * 连接恢复后由 flushQueue 自动补发——调用方必须把这一状态如实告知用户，
+ * 不能当作「已送达」上报成功。
+ *
+ * `pending=true` 表示桌面端已收到但处于 confirm / edit_only 模式，
+ * 任务尚未创建，需用户在 velo 界面确认后才会开始下载——同样不能上报「已开始下载」。
+ */
+export interface PushResult {
+  queued: boolean
+  pending?: boolean
+}
+
+/**
+ * 消息已发出但未收到桌面端确认（响应超时 / 发送后连接中断）。
+ *
+ * 与「发送失败」严格区分：此时桌面端可能已经创建了任务，调用方**不得**回退到
+ * 其它客户端重发，否则会出现重复下载。调用方应提示用户先检查 velo 任务列表。
+ */
+export class PushUnconfirmedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PushUnconfirmedError'
+  }
+}
+
+export function createPushClient(port: number, token: string) {
   let ws: WebSocket | null = null
   let connected = false
   let everConnected = false
@@ -116,28 +144,17 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
 
   let nextRequestId = 1
   const pendingRequests = new Map<number, {
-    resolve: () => void
+    resolve: (result: PushResult) => void
     reject: (reason: Error) => void
     timer: ReturnType<typeof setTimeout>
   }>()
   const PUSH_RESPONSE_TIMEOUT = 15000
-
-  // === task #10: HTTP 推送通道状态 ===
-  // HTTP 通道无持久连接，用周期性健康检查代替重连：
-  //   - 启动时立即探活
-  //   - 每 30s 探活一次（HEALTH_CHECK_INTERVAL）
-  //   - 探活成功 → connected=true + 清除 badge + flush 队列
-  //   - 探活失败 → connected=false + 标记 badge + 通知用户
-  // 与 WS 重连策略的差异：WS 是被动 close→重连，HTTP 是主动周期探活
-  let healthCheckTimer: ReturnType<typeof setInterval> | null = null
-  const HEALTH_CHECK_INTERVAL = 30000
-  const HTTP_PUSH_TIMEOUT = 8000
   let connectionFailureAlerted = false
 
   function rejectAllPending(reason: string): void {
     for (const [, pending] of pendingRequests) {
       clearTimeout(pending.timer)
-      pending.reject(new Error(reason))
+      pending.reject(new PushUnconfirmedError(reason))
     }
     pendingRequests.clear()
   }
@@ -178,15 +195,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
   function connect(): void {
     reconnectIndex = 0
     autoReconnectExhausted = false
-    if (channel === 'ws') {
-      connectWs()
-    } else if (channel === 'http') {
-      connectHttp()
-    } else if (channel === 'deep-link') {
-      connectDeepLink()
-    } else {
-      logger.info('Push channel is', channel, ', no connection established')
-    }
+    connectWs()
   }
 
   /**
@@ -246,7 +255,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data as string) as {
-          ok?: boolean; error?: string; detail?: string; action?: string; request_id?: number
+          ok?: boolean; error?: string; detail?: string; action?: string; request_id?: number; pending?: boolean
         }
         if (awaitingPong) {
           awaitingPong = false
@@ -260,8 +269,11 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
           clearTimeout(pending.timer)
           if (data.error) {
             pending.reject(new Error(data.detail ?? data.error))
+          } else if (data.pending) {
+            // confirm / edit_only 模式：桌面端已收到，但任务要等用户在 velo 里确认
+            pending.resolve({ queued: false, pending: true })
           } else {
-            pending.resolve()
+            pending.resolve({ queued: false })
           }
           return
         }
@@ -296,71 +308,6 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     }
   }
 
-  // ============================================================================
-  // task #10: HTTP 推送通道实现
-  // ============================================================================
-
-  function connectHttp(): void {
-    logger.info('HTTP push channel started, port:', port)
-    // HTTP 通道无持久连接：启动即视为「准备就绪」
-    // 周期性健康检查探活，决定 connected 状态
-    if (healthCheckTimer) clearInterval(healthCheckTimer)
-    healthCheckTimer = setInterval(() => { void healthCheck() }, HEALTH_CHECK_INTERVAL)
-    // 启动时立即探活一次
-    void healthCheck()
-  }
-
-  /**
-   * HTTP 健康检查（task #10 重连策略）
-   *
-   * GET http://127.0.0.1:{port}/health
-   *   - 2xx → connected=true + 清除 badge + flush 队列
-   *   - 非 2xx 或网络错误 → connected=false + 标记 badge + 通知用户
-   *
-   * 与 WS 重连策略的差异：
-   *   - WS 是被动 close→onclose→重连（依赖 TCP RST/FIN）
-   *   - HTTP 是主动周期探活（无需 TCP keepalive，每 30s 主动 GET）
-   *   - 失败时不递增 reconnectIndex，因为周期探活本身就是循环
-   */
-  async function healthCheck(): Promise<void> {
-    const url = `http://127.0.0.1:${port}/health`
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), HTTP_PUSH_TIMEOUT)
-      try {
-        const res = await fetch(url, { method: 'GET', signal: controller.signal })
-        if (res.ok) {
-          if (!connected) {
-            logger.info('HTTP health check OK, connected')
-          }
-          connected = true
-          everConnected = true
-          reconnectIndex = 0
-          clearBadge()
-          clearDisconnectNotification()
-          connectionFailureAlerted = false
-          void flushQueue()
-        } else {
-          markDisconnected(`HTTP ${res.status}`)
-        }
-      } finally {
-        clearTimeout(timeout)
-      }
-    } catch (e) {
-      markDisconnected((e as Error).message)
-    }
-  }
-
-  function markDisconnected(reason: string): void {
-    if (connected) {
-      logger.info('Health check failed:', reason, '— marking disconnected')
-    } else {
-      logger.debug('Health check failed:', reason)
-    }
-    connected = false
-    handleConnectionFailure()
-  }
-
   /**
    * 连接失败统一反馈：badge + 桌面通知 + 一次性三步排查 alert
    *
@@ -376,125 +323,6 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     }
   }
 
-  /**
-   * task #10: HTTP 推送单条消息
-   *
-   * POST http://127.0.0.1:{port}/push
-   *   Content-Type: application/json
-   *   Body: JSON.stringify(PushMessage)
-   *
-   * 成功 → 直接返回
-   * 失败 → 加入离线队列（与 WS 共用同一队列），下次健康检查 OK 时 flush
-   */
-  async function pushHttp(message: PushMessage): Promise<void> {
-    const url = `http://127.0.0.1:${port}/push`
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), HTTP_PUSH_TIMEOUT)
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(message),
-          signal: controller.signal,
-        })
-        if (!res.ok) {
-          const body = await res.text().catch(() => '')
-          throw new Error(`HTTP ${res.status}: ${body}`)
-        }
-        logger.info('HTTP push sent:', message.action)
-        // 推送成功 → 标记 connected（健康检查可能滞后）
-        if (!connected) {
-          connected = true
-          everConnected = true
-          reconnectIndex = 0
-          clearBadge()
-          clearDisconnectNotification()
-          connectionFailureAlerted = false
-        }
-        return
-      } finally {
-        clearTimeout(timeout)
-      }
-    } catch (e) {
-      logger.warn('HTTP push failed, queueing:', (e as Error).message, 'action:', message.action)
-      markDisconnected((e as Error).message)
-      // 入队（与 WS 共享同一队列）
-      queue.push({ message, retries: 0, addedAt: Date.now() })
-      if (queue.length > QUEUE_MAX_SIZE) {
-        queue.splice(0, queue.length - QUEUE_MAX_SIZE)
-      }
-      await persistQueue()
-    }
-  }
-
-  // ============================================================================
-  // task #11: Deep Link 推送通道实现（Safari / macOS 专用）
-  // ============================================================================
-
-  /**
-   * task #11: DeepLink 通道连接
-   *
-   * Safari / macOS 上：用 `velo://push?data={base64}` URL scheme 触发桌面端拉起
-   *   - 无需持久连接
-   *   - 每条消息通过 chrome.tabs.create 打开 velo:// URL
-   *   - OS 路由到 velo 桌面端（已注册 URL scheme handler）
-   *
-   * 与 WS/HTTP 重连策略差异：
-   *   - 无连接概念，无需探活
-   *   - 推送失败（chrome.tabs.create 抛错）即视为不可用
-   *   - badge 不标记错误（用户已通过 OS 看到是否成功）
-   */
-  function connectDeepLink(): void {
-    logger.info('DeepLink push channel started (velo:// scheme)')
-    connected = true
-    everConnected = true
-    clearBadge()
-    clearDisconnectNotification()
-    void flushQueue()
-  }
-
-  /**
-   * task #11: 通过 velo:// URL scheme 发送推送
-   *
-   * 方案：chrome.tabs.create({ url: 'velo://push?data=...' })
-   *   - 在 SW 中触发 OS 协议处理器
-   *   - 浏览器会弹「打开 velo?」对话框（首次），用户允许后桌面端被拉起
-   *   - 创建的 tab 是临时的，用户感知为「打开外部应用」
-   *
-   * 备选方案（Chrome MV3 SW 不可用，需要 content script）：
-   *   - location.href = 'velo://push?...'
-   *   - 隐藏 iframe.src = 'velo://push?...'
-   *   - 这两种方式在 content script 中可用，需通过消息转发
-   *   - 但 chrome.tabs.create 在 SW 中更直接，且 OS 路由逻辑一致
-   *
-   * @param message 推送消息
-   */
-  async function pushDeepLink(message: PushMessage): Promise<void> {
-    try {
-      const json = JSON.stringify(message)
-      // base64 编码（兼容 Unicode）
-      const b64Bytes = new TextEncoder().encode(json)
-      let bin = ''
-      for (const b of b64Bytes) bin += String.fromCharCode(b)
-      const b64 = btoa(bin)
-      const dlUrl = `velo://push?data=${encodeURIComponent(b64)}`
-
-      // chrome.tabs.create 会触发 OS 协议处理器
-      // active:false 避免抢焦点；后台创建 tab 让浏览器静默处理
-      await chrome.tabs.create({ url: dlUrl, active: false })
-      logger.info('DeepLink push sent (velo://):', message.action)
-    } catch (e) {
-      logger.warn('DeepLink push failed, queueing:', (e as Error).message, 'action:', message.action)
-      // 入队（与 WS/HTTP 共享）
-      queue.push({ message, retries: 0, addedAt: Date.now() })
-      if (queue.length > QUEUE_MAX_SIZE) {
-        queue.splice(0, queue.length - QUEUE_MAX_SIZE)
-      }
-      await persistQueue()
-    }
-  }
-
   function disconnect(): void {
     disposed = true
     if (reconnectTimer) {
@@ -502,10 +330,6 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       reconnectTimer = null
     }
     stopHeartbeat()
-    if (healthCheckTimer) {
-      clearInterval(healthCheckTimer)
-      healthCheckTimer = null
-    }
     if (ws) {
       ws.onclose = null
       ws.onerror = null
@@ -553,7 +377,7 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     }, delay)
   }
 
-  async function push(message: Record<string, unknown>): Promise<void> {
+  async function push(message: Record<string, unknown>): Promise<PushResult> {
     // P3-2: 确保 loadQueue 完成后再操作队列，避免 FIFO 顺序错乱
     // （loadQueue 是 fire-and-forget 预加载，push 可能在它完成前被调用）
     await ensureQueueLoaded()
@@ -575,38 +399,36 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
       },
     } as PushMessage
 
-    // === task #10/#11: 按通道分发 ===
-    if (channel === 'http') {
-      await pushHttp(pushMsg)
-      return
-    }
-    if (channel === 'deep-link') {
-      await pushDeepLink(pushMsg)
-      return
-    }
-
     // WS 通道: request-response 模式
     if (connected && ws?.readyState === WebSocket.OPEN) {
+      let sent = false
       try {
         ws.send(JSON.stringify(pushMsg))
+        sent = true
         logger.info('Push sent:', pushMsg.action, 'request_id:', requestId)
-        // 等待桌面端响应：成功 → resolve, 错误 → reject (触发 fallback), 超时 → resolve (兼容旧版)
-        return await new Promise<void>((resolve, reject) => {
+      } catch (e) {
+        logger.error('Push send failed:', (e as Error).message)
+      }
+      // ⚠️ 等待回执必须放在 try 之外：超时的 reject 若被 catch 吞掉，
+      // 就会落入下面的离线队列分支返回 queued=true，导致「未确认」被伪装成「已入队」。
+      if (sent) {
+        // 等待桌面端回执：成功 → resolve；错误 → reject（触发回退）；
+        // 超时 → reject(PushUnconfirmedError)。桌面端已回显 request_id，
+        // 超时意味着「已发出但未确认」，不能当作成功（否则 UI 假成功）。
+        return await new Promise<PushResult>((resolve, reject) => {
           const timer = setTimeout(() => {
             pendingRequests.delete(requestId)
-            logger.debug('Push response timeout (no error from server), assuming success:', pushMsg.action)
-            resolve()
+            logger.warn('Push response timeout:', pushMsg.action, 'request_id:', requestId)
+            reject(new PushUnconfirmedError(i18n('push_unconfirmed')))
           }, PUSH_RESPONSE_TIMEOUT)
           pendingRequests.set(requestId, { resolve, reject, timer })
         })
-      } catch (e) {
-        logger.error('Push send failed:', (e as Error).message)
       }
     }
 
     // WS 通道：当前无连接时，用户主动推送（如点击下载）触发一次建连尝试
     // 这是「用户触发」路径，重置退避序列，避免自动重连停止后永久失联
-    if (channel === 'ws' && !ws) {
+    if (!ws) {
       connect()
     }
 
@@ -616,33 +438,20 @@ export function createPushClient(channel: 'ws' | 'http' | 'deep-link', port: num
     }
     await persistQueue()
     logger.info('Push queued (offline):', pushMsg.action)
+    return { queued: true }
   }
 
   async function flushQueue(): Promise<void> {
     if (queue.length === 0) return
 
-    // === WS 通道：需要 ws 处于 OPEN 状态 ===
-    if (channel === 'ws') {
-      if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return
-    }
-    // === HTTP 通道：需要 connected=true（健康检查通过）===
-    if (channel === 'http' && !connected) return
-    // === DeepLink 通道：始终可推送 ===
-    if (channel === 'deep-link' && !connected) {
-      connected = true
-    }
+    // 需要 ws 处于 OPEN 状态才可冲刷
+    if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return
 
     const items = queue.splice(0, queue.length)
     for (const item of items) {
       try {
-        if (channel === 'ws' && ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(item.message))
-          logger.info('Flushed queued push:', item.message.action)
-        } else if (channel === 'http') {
-          await pushHttp(item.message)
-        } else if (channel === 'deep-link') {
-          await pushDeepLink(item.message)
-        }
+        ws.send(JSON.stringify(item.message))
+        logger.info('Flushed queued push:', item.message.action)
       } catch (e) {
         logger.error('Flush failed:', (e as Error).message)
         queue.push({ ...item, retries: item.retries + 1 })

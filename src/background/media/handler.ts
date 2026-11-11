@@ -11,10 +11,13 @@
 
 import { registerHandler } from '@/background/messaging/router'
 import { logger } from '@/lib/logger'
+import { i18n } from '@/lib/i18n'
+import { PushUnconfirmedError } from '@/background/push-client'
 import { clearMediaItems, getMediaItems, startSniffer, stopSniffer, isSnifferRunning, addMediaItemExternal, pairDashItems } from './sniffer'
 import { getDownloadConfig, sendToDownloadClient, setDownloadConfig, sendToVeloDash, getPushClient, buildVeloHeaders } from './download-client'
 import { loadCleanedContext, type CleanedContext } from '@/background/hls/handler'
 import type { DownloadClientConfig } from './types'
+import { DEFAULT_DOWNLOAD_CONFIG } from './types'
 import {
   sniffFacebookEmbed,
   parseYouTubeScriptFormats,
@@ -51,7 +54,7 @@ async function dispatchCleanedM3u8(
     requestHeaders?: Record<string, string> | undefined
     cookieUrl?: string | undefined
   } = {},
-): Promise<{ success: boolean; message?: string | undefined }> {
+): Promise<{ success: boolean; queued?: boolean; pending?: boolean; unconfirmed?: boolean; message?: string | undefined }> {
   const { fileName, pageUrl, requestHeaders, cookieUrl } = opts
   const cfg = await getDownloadConfig()
   const finalPageUrl = pageUrl || ctx.baseUrl || ''
@@ -65,7 +68,7 @@ async function dispatchCleanedM3u8(
   const headers = buildVeloHeaders(downloadExtra)
   const pushMsg = {
     version: 1,
-    token: cfg.veloToken ?? 'velo-auto',
+    token: '',
     action: 'push_m3u8' as const,
     url: ctx.baseUrl,
     m3u8_text: ctx.cleaned,
@@ -82,10 +85,27 @@ async function dispatchCleanedM3u8(
   }
   if (pushClient) {
     try {
-      await pushClient.push(pushMsg)
+      const pushed = await pushClient.push(pushMsg)
+      if (pushed.queued) {
+        logger.info('[media] cleaned m3u8 queued (velo offline)')
+        return { success: true, queued: true, message: i18n('download_queued') }
+      }
+      if (pushed.pending) {
+        logger.info('[media] cleaned m3u8 awaiting user confirm in velo')
+        return { success: true, pending: true, message: i18n('push_pending_confirm') }
+      }
       logger.info('[media] pushed cleaned m3u8 via PushClient')
       return { success: true }
     } catch (e) {
+      if (e instanceof PushUnconfirmedError) {
+        logger.warn('[media] cleaned m3u8 push unconfirmed:', e.message)
+        return { success: false, unconfirmed: true, message: i18n('push_unconfirmed') }
+      }
+      // 桌面端明确拒绝：客户端已是 velo 时不再回退（回退等于向同一端重推）
+      if (cfg.client === 'velo') {
+        logger.warn('[media] cleaned m3u8 push rejected:', (e as Error).message)
+        return { success: false, message: (e as Error).message }
+      }
       logger.warn('[media] PushClient cleaned m3u8 push failed falling back:' + (e as Error).message)
     }
   }
@@ -105,7 +125,13 @@ async function dispatchCleanedM3u8(
   if (cfg.client === 'velo') {
     const { sendToVeloM3u8 } = await import('./download-client')
     const r = await sendToVeloM3u8(ctx.cleaned, ctx.baseUrl, fileName || ctx.pageTitle, cfg, downloadExtra)
-    return { success: r.success, message: r.message }
+    return {
+      success: r.success,
+      ...(r.queued ? { queued: true } : {}),
+      ...(r.pending ? { pending: true } : {}),
+      ...(r.unconfirmed ? { unconfirmed: true } : {}),
+      ...(r.message ? { message: r.message } : {}),
+    }
   }
   if (cfg.client === 'ndm') {
     const bytes = new TextEncoder().encode(ctx.cleaned)
@@ -290,7 +316,7 @@ export function registerMediaHandlers(): void {
         const headers = buildVeloHeaders(extra)
         const msg = {
           version: 1,
-          token: cfg.veloToken ?? 'velo-auto',
+          token: '',
           action: 'push_dash' as const,
           video_url: videoUrl,
           audio_url: audioUrl,
@@ -307,16 +333,40 @@ export function registerMediaHandlers(): void {
           page_url: finalPageUrl || undefined,
           page_title: sender.tab?.title || undefined,
         }
-        await pushClient.push(msg)
+        const pushed = await pushClient.push(msg)
+        if (pushed.queued) {
+          logger.info('[media] DASH queued (velo offline): video=', videoUrl.slice(0, 80))
+          return { success: true, queued: true, message: i18n('download_queued') }
+        }
+        if (pushed.pending) {
+          logger.info('[media] DASH awaiting user confirm in velo: video=', videoUrl.slice(0, 80))
+          return { success: true, pending: true, message: i18n('push_pending_confirm') }
+        }
         logger.info('[media] pushed DASH via PushClient: video=', videoUrl.slice(0, 80), 'audio=', audioUrl.slice(0, 80))
         return { success: true }
       } catch (e) {
+        if (e instanceof PushUnconfirmedError) {
+          logger.warn('[media] DASH push unconfirmed:', e.message)
+          return { success: false, unconfirmed: true, message: i18n('push_unconfirmed') }
+        }
+        // 桌面端明确拒绝：客户端已是 velo 时不再回退（回退等于向同一端重推）
+        if (cfg.client === 'velo') {
+          logger.warn('[media] DASH push rejected:', (e as Error).message)
+          return { success: false, message: (e as Error).message }
+        }
         logger.warn('[media] PushClient DASH push failed, falling back:', (e as Error).message)
       }
     }
 
     if (cfg.client === 'velo') {
-      return await sendToVeloDash(videoUrl, audioUrl, fileName, cfg, extra)
+      const r = await sendToVeloDash(videoUrl, audioUrl, fileName, cfg, extra)
+      return {
+        success: r.success,
+        ...(r.queued ? { queued: true } : {}),
+        ...(r.pending ? { pending: true } : {}),
+        ...(r.unconfirmed ? { unconfirmed: true } : {}),
+        ...(r.message ? { message: r.message } : {}),
+      }
     }
 
     // aria2/ndm/native：分别推送 video + audio，提示用户需手动合并
@@ -350,14 +400,13 @@ export function registerMediaHandlers(): void {
   registerHandler<Partial<DownloadClientConfig>>('setDownloadConfig', async (message) => {
     const cfg = message.payload
     await setDownloadConfig({
-      client: cfg.client ?? 'native',
-      rpcUrl: cfg.rpcUrl ?? 'http://127.0.0.1:16816/jsonrpc',
-      rpcSecret: cfg.rpcSecret ?? '',
-      veloUrl: cfg.veloUrl ?? 'ws://127.0.0.1:16888/ws',
-      veloToken: cfg.veloToken ?? '',
-      headerLevel: cfg.headerLevel ?? 'full',
-      mergeFormat: cfg.mergeFormat ?? 'ts',
-      autoPush: cfg.autoPush ?? false,
+      client: cfg.client ?? DEFAULT_DOWNLOAD_CONFIG.client,
+      rpcUrl: cfg.rpcUrl ?? DEFAULT_DOWNLOAD_CONFIG.rpcUrl,
+      rpcSecret: cfg.rpcSecret ?? DEFAULT_DOWNLOAD_CONFIG.rpcSecret,
+      ndmUrl: cfg.ndmUrl || DEFAULT_DOWNLOAD_CONFIG.ndmUrl,
+      headerLevel: cfg.headerLevel ?? DEFAULT_DOWNLOAD_CONFIG.headerLevel,
+      mergeFormat: cfg.mergeFormat ?? DEFAULT_DOWNLOAD_CONFIG.mergeFormat,
+      autoPush: cfg.autoPush ?? DEFAULT_DOWNLOAD_CONFIG.autoPush,
     })
     logger.info('[media] download config saved:', cfg.client)
     return { success: true as const }

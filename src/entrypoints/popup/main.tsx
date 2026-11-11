@@ -59,13 +59,13 @@ function Popup() {
   const loadStatus = useCallback(async () => {
     const st = await request<{
       paired?: boolean
-      config?: { port?: number }
+      pairing?: { port?: number }
     }>('velo-get-status')
     if (!st) {
       setStatus(i18n('popup_comm_error'))
     } else {
       setPaired(st.paired ?? false)
-      if (st.config?.port) setPort(st.config.port)
+      if (st.pairing?.port) setPort(st.pairing.port)
       if (!st.paired) void handleAutoConnect()
     }
 
@@ -144,11 +144,23 @@ function Popup() {
       alert(i18n('popup_no_active_tab'))
       return
     }
-    const r = await request<{ ok?: boolean; filename?: string; error?: string }>('downloadCleanedM3u8', {
+    const r = await request<{ ok?: boolean; filename?: string; error?: string; queued?: boolean; pending?: boolean; unconfirmed?: boolean }>('downloadCleanedM3u8', {
       tabId,
     })
     if (!r) {
       alert(i18n('popup_download_fail', [i18n('popup_comm_error')]))
+      return
+    }
+    if (r.ok && r.queued) {
+      setStatus(i18n('download_queued'))
+      return
+    }
+    if (r.ok && r.pending) {
+      setStatus(i18n('push_pending_confirm'))
+      return
+    }
+    if (r.unconfirmed) {
+      setStatus(i18n('push_unconfirmed'))
       return
     }
     if (r.ok) {

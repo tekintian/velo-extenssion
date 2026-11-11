@@ -5,17 +5,19 @@
  *
  * 四种客户端:
  *   aria2   - HTTP POST JSON-RPC 到 http://host:port/jsonrpc (Motrix/aria2/FDM 通用)
- *   ndm     - WebSocket ws://127.0.0.1:10007/download 子协议 neatextension.v1
+ *   ndm     - WebSocket ws://host:port/download 子协议 neatextension.v1（地址可配置，默认 10007；可指向 velo 推送端口 16888 的 NDM 兼容通道）
  *   velo   - WebSocket ws://host:port JSON HlsPushMessage (velo/Motrix Lite 推送协议)
  *   native  - chrome.downloads.download (浏览器自带)
  */
 
 import { logger } from '@/lib/logger'
+import { i18n } from '@/lib/i18n'
 import { persistentStorage } from '@/lib/storage'
 import { DEFAULT_DOWNLOAD_CONFIG } from './types'
 import type { DownloadClientConfig, HeaderForwardLevel } from './types'
 import type { MediaDescriptor } from '@/types'
-import { createPushClient } from '@/background/push-client'
+import { createPushClient, PushUnconfirmedError } from '@/background/push-client'
+import type { PushResult } from '@/background/push-client'
 
 const DOWNLOAD_CONFIG_KEY = 'downloadClientConfig'
 
@@ -39,10 +41,10 @@ export async function getDownloadConfig(): Promise<DownloadClientConfig> {
   try {
     const stored = await persistentStorage.get<DownloadClientConfig>(DOWNLOAD_CONFIG_KEY)
     if (!stored) return DEFAULT_DOWNLOAD_CONFIG
-    if (!stored.veloToken) {
-      return { ...stored, veloToken: DEFAULT_DOWNLOAD_CONFIG.veloToken }
+    return {
+      ...stored,
+      ndmUrl: stored.ndmUrl || DEFAULT_DOWNLOAD_CONFIG.ndmUrl,
     }
-    return stored
   } catch {
     return DEFAULT_DOWNLOAD_CONFIG
   }
@@ -58,7 +60,11 @@ export async function setDownloadConfig(cfg: DownloadClientConfig): Promise<void
 /**
  * 发送 URL 到下载客户端
  *
- * @returns { success: boolean, message?: string }
+ * @returns { success: boolean; queued?: boolean; pending?: boolean; unconfirmed?: boolean; message?: string }
+ *   - `queued=true`：velo 当前未连接，消息已进入离线队列，连接恢复后自动补发
+ *   - `pending=true`：velo 已收到但处于 confirm / edit_only 模式，需用户在 velo 内确认后才建任务
+ *   - `unconfirmed=true`：已发出但未收到回执，**不得回退到其它客户端重发**（可能已建任务，重发会重复下载）
+ *   - `success=false`：明确失败（桌面端拒绝 / 其它客户端失败），可回退
  */
 export async function sendToDownloadClient(
   url: string,
@@ -75,7 +81,7 @@ export async function sendToDownloadClient(
     contentLength?: string | undefined
     priority?: string | undefined
   },
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; queued?: boolean; pending?: boolean; unconfirmed?: boolean; message?: string }> {
   const cfg = await getDownloadConfig()
 
   if (pushClientInstance) {
@@ -101,10 +107,28 @@ export async function sendToDownloadClient(
         page_url: extra?.pageUrl,
         page_title: extra?.title,
       }
-      await pushClientInstance.push(msg)
+      const result = await pushClientInstance.push(msg)
+      if (result.queued) {
+        logger.info('[download] velo 未连接，已入队:', url.slice(0, 80))
+        return { success: true, queued: true, message: i18n('download_queued') }
+      }
+      if (result.pending) {
+        logger.info('[download] velo 已收到，等待用户确认:', url.slice(0, 80))
+        return { success: true, pending: true, message: i18n('push_pending_confirm') }
+      }
       logger.info('[download] pushed via PushClient:', url.slice(0, 80))
       return { success: true }
     } catch (e) {
+      // 「已发出但未确认」不能回退重发：桌面端可能已建任务，回退会造成重复下载
+      if (e instanceof PushUnconfirmedError) {
+        logger.warn('[download] push unconfirmed:', e.message)
+        return { success: false, unconfirmed: true, message: i18n('push_unconfirmed') }
+      }
+      // 桌面端明确拒绝：cfg.client 已是 velo 时不再回退（回退等于重推同一端）
+      if (cfg.client === 'velo') {
+        logger.warn('[download] PushClient push rejected:', (e as Error).message)
+        return { success: false, message: (e as Error).message }
+      }
       logger.warn('[download] PushClient push failed, falling back to config:', (e as Error).message)
     }
   }
@@ -160,17 +184,19 @@ export async function sendToAria2(
   },
   /** 跳过 m3u8 → velo push 分流（内部 data URL 落地后已是 file:// m3u8，无需再分流） */
   skipVeloRedirect?: boolean,
-): Promise<{ success: boolean; message?: string }> {
+): Promise<VeloPushOutcome> {
   // m3u8 URL（非 data URL）→ 优先走 velo push 协议（HLS 解析链路）
   // 跳过条件：调用方明确要求（如 data URL 已落地为 file:// m3u8，velo 桌面端无法访问本机 file 路径）
   if (!skipVeloRedirect && !url.startsWith('data:') && isHlsMedia(url, extra?.contentType)) {
     logger.info('[download] m3u8 检测到，优先走 velo push 协议（HLS 解析链路）:', url.slice(0, 80))
-    const veloResult = await sendToVelo(url, fileName, cfg, extra).catch((e) => ({
-      success: false as const,
-      message: (e as Error).message,
-    }))
+    const veloResult = await sendToVelo(url, fileName, cfg, extra)
     if (veloResult.success) return veloResult
-    // velo 不可用 → 回退 aria2 直传（下游客户端自行处理 m3u8）
+    // 「已发出但未确认」不能回退：桌面端可能已建任务，回退 aria2 会造成重复下载
+    if (veloResult.unconfirmed) {
+      logger.warn('[download] velo push 未确认，禁止回退 aria2 直传:', veloResult.message)
+      return veloResult
+    }
+    // velo 明确不可用 → 回退 aria2 直传（下游客户端自行处理 m3u8）
     logger.warn('[download] velo push 失败，回退 aria2 直传:', veloResult.message, '— 下游需自行处理 m3u8 合并')
   }
 
@@ -334,11 +360,15 @@ export function materializeDataUrl(
 /**
  * NDM WebSocket
  *
- * ws://127.0.0.1:10007/download 子协议 neatextension.v1
+ * 默认 ws://127.0.0.1:10007/download 子协议 neatextension.v1；
+ * 也可指向 velo 桌面端的 NDM 兼容通道 ws://127.0.0.1:<推送端口>/download
+ * （推送端口默认 16888，与 velo-ext 共用同一监听端口，按路径分发）。
  * 协议：连上后发送 URL + headers，NDM 桌面端接收后开始下载
  */
 let ndmWs: WebSocket | null = null
 let ndmWsReady = false
+/** 当前 NDM 连接对应的 URL，配置变更后需重连 */
+let ndmWsUrl: string | null = null
 
 export async function sendToNdm(
   url: string,
@@ -346,23 +376,31 @@ export async function sendToNdm(
   cfg: DownloadClientConfig,
   extra?: { pageUrl?: string | undefined; contentType?: string | undefined; contentDisposition?: string | undefined; method?: string | undefined; cookies?: string | undefined; requestBody?: string | undefined; requestHeaders?: Record<string, string> | undefined; contentLength?: string | undefined; priority?: string | undefined },
 ): Promise<{ success: boolean; message?: string }> {
+  const ndmUrl = cfg.ndmUrl || DEFAULT_DOWNLOAD_CONFIG.ndmUrl
   return new Promise((resolve) => {
     try {
-      if (ndmWs && ndmWsReady && ndmWs.readyState === WebSocket.OPEN) {
+      if (ndmWs && ndmWsReady && ndmWs.readyState === WebSocket.OPEN && ndmWsUrl === ndmUrl) {
         ndmSendPayload(ndmWs, url, fileName, extra, cfg.headerLevel)
         resolve({ success: true })
         return
       }
+      // 配置地址变更：丢弃旧连接
+      if (ndmWs && ndmWsUrl !== ndmUrl) {
+        try { ndmWs.close() } catch { /* 忽略关闭异常 */ }
+        ndmWs = null
+        ndmWsReady = false
+      }
       // 建立连接
-      const ws = new WebSocket('ws://127.0.0.1:10007/download', 'neatextension.v1')
+      const ws = new WebSocket(ndmUrl, 'neatextension.v1')
       const timeout = setTimeout(() => {
         ws.close()
-        resolve({ success: false, message: 'NDM 连接超时（确保 NDM 桌面端已启动）' })
+        resolve({ success: false, message: `NDM 连接超时（确保 ${ndmUrl} 可访问）` })
       }, 3000)
       ws.onopen = () => {
         clearTimeout(timeout)
         ndmWs = ws
         ndmWsReady = true
+        ndmWsUrl = ndmUrl
         ndmSendPayload(ws, url, fileName, extra, cfg.headerLevel)
         resolve({ success: true })
       }
@@ -370,11 +408,13 @@ export async function sendToNdm(
         clearTimeout(timeout)
         ndmWs = null
         ndmWsReady = false
-        resolve({ success: false, message: 'NDM 连接失败（确保 NDM 桌面端已启动 + 端口 10007 开放）' })
+        ndmWsUrl = null
+        resolve({ success: false, message: `NDM 连接失败（确保 NDM 桌面端或 velo 已启动，且 ${ndmUrl} 可访问）` })
       }
       ws.onclose = () => {
         ndmWs = null
         ndmWsReady = false
+        ndmWsUrl = null
       }
     } catch (e) {
       resolve({ success: false, message: (e as Error).message })
@@ -485,15 +525,55 @@ export async function sendToNative(
 }
 
 /**
- * velo push server (WebSocket JSON HlsPushMessage)
+ * velo 推送统一走 PushClient（`background/push-client.ts`）。
  *
- * 协议：ws://host:port，发送 JSON { token, action, url, ... }
- * velo (Motrix Lite) 接收后创建 HLS 下载任务
- *
- * 对应 velo velo-core HlsPushMessage 结构
+ * 历史上这里还有一套独立的 `veloWs` 连接管理（`resolveVeloEndpoint` + 裸 WebSocket），
+ * 与 PushClient 形成两条并行连接：端口/Token 各自解析、重连/心跳各自实现，
+ * 且 `onopen` 后立即 resolve(true) → 「已发出但未确认」被当作成功上报。
+ * 现已全部收敛到 PushClient：单一连接、单一端点来源、统一三态语义。
  */
-let veloWs: WebSocket | null = null
-let veloWsReady = false
+
+/** velo 推送结果（三态 + 未确认标记） */
+export interface VeloPushOutcome {
+  success: boolean
+  /** 未连接，已进入离线队列，连接恢复后自动补发 */
+  queued?: boolean
+  /** 桌面端已收到，但处于 confirm / edit_only 模式，需用户在 velo 内确认 */
+  pending?: boolean
+  /** 已发出但未收到确认：不得回退重发，否则可能重复下载 */
+  unconfirmed?: boolean
+  message?: string
+}
+
+/**
+ * 执行一次 velo 推送并把 PushClient 的三态结果映射为 VeloPushOutcome。
+ *
+ * `PushUnconfirmedError` 在这里被转换为 `unconfirmed: true` 而不是抛出，
+ * 让调用方用显式分支禁止回退（抛异常容易被外层 catch 当作普通失败后回退重发）。
+ */
+async function runVeloPush(msg: Record<string, unknown>): Promise<VeloPushOutcome> {
+  const pushClient = pushClientInstance
+  if (!pushClient) {
+    return { success: false, message: i18n('push_client_not_ready') }
+  }
+  try {
+    const result = await pushClient.push(msg)
+    if (result.queued) {
+      return { success: true, queued: true, message: i18n('download_queued') }
+    }
+    if (result.pending) {
+      return { success: true, pending: true, message: i18n('push_pending_confirm') }
+    }
+    return { success: true }
+  } catch (e) {
+    if (e instanceof PushUnconfirmedError) {
+      logger.warn('[download] velo push unconfirmed:', e.message)
+      return { success: false, unconfirmed: true, message: i18n('push_unconfirmed') }
+    }
+    logger.warn('[download] velo push rejected:', (e as Error).message)
+    return { success: false, message: (e as Error).message }
+  }
+}
 
 export async function sendToVelo(
   url: string,
@@ -511,7 +591,7 @@ export async function sendToVelo(
     contentLength?: string | undefined
     priority?: string | undefined
   },
-): Promise<{ success: boolean; message?: string }> {
+): Promise<VeloPushOutcome> {
   // === HEAD 预检（task 6） ===
   // 当 contentType 缺失 且 URL 是 http(s) 非 m3u8 非 data: 时，发 HEAD 请求获取元数据
   // 移植自 NDM bg.js W.I 行 86-91 的 HEAD 分支（velo 没有显式 waiting 协议，但我们
@@ -539,40 +619,31 @@ export async function sendToVelo(
     }
   }
 
-  const wsUrl = cfg.veloUrl
-  return new Promise((resolve) => {
-    try {
-      if (veloWs && veloWsReady && veloWs.readyState === WebSocket.OPEN) {
-        veloWsSendUrl(veloWs, url, fileName, cfg.veloToken, finalExtra, cfg.headerLevel)
-        resolve({ success: true })
-        return
-      }
-      const ws = new WebSocket(wsUrl)
-      const timeout = setTimeout(() => {
-        ws.close()
-        resolve({ success: false, message: 'velo 连接超时（确保 velo 已启动并开启推送服务）' })
-      }, 5000)
-      ws.onopen = () => {
-        clearTimeout(timeout)
-        veloWs = ws
-        veloWsReady = true
-        veloWsSendUrl(ws, url, fileName, cfg.veloToken, finalExtra, cfg.headerLevel)
-        resolve({ success: true })
-      }
-      ws.onerror = () => {
-        clearTimeout(timeout)
-        veloWs = null
-        veloWsReady = false
-        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + URL 可访问）` })
-      }
-      ws.onclose = () => {
-        veloWs = null
-        veloWsReady = false
-      }
-    } catch (e) {
-      resolve({ success: false, message: (e as Error).message })
-    }
-  })
+  const isM3u8 = isHlsMedia(url, finalExtra?.contentType)
+  const msg = {
+    version: 1,
+    token: '',
+    action: (isM3u8 ? 'push_url' : 'push_normal') as 'push_url' | 'push_normal',
+    url,
+    base_url: undefined as string | undefined,
+    m3u8_text: undefined as string | undefined,
+    // Content-Type/Disposition 透传：桌面端可优先使用，避免重复 HEAD 探测
+    content_type: finalExtra?.contentType ?? undefined,
+    content_disposition: finalExtra?.contentDisposition ?? undefined,
+    // HTTP 方法 + POST body 透传；HEAD 探测归一化为 GET（下载语义必然取响应体）
+    method: normalizeDownloadMethod(finalExtra?.method),
+    post_data: finalExtra?.requestBody ?? undefined,
+    headers: buildVeloHeaders(finalExtra, cfg.headerLevel),
+    options: {
+      filename: fileName ?? undefined,
+      output_dir: undefined as string | undefined,
+      merge_format: isM3u8 ? (_cachedConfig.mergeFormat ?? 'ts') : '',
+      extra_headers: undefined as Record<string, string> | undefined,
+    },
+    page_url: finalExtra?.pageUrl,
+    page_title: finalExtra?.title,
+  }
+  return await runVeloPush(msg)
 }
 
 /**
@@ -592,41 +663,26 @@ export async function sendToVeloM3u8(
     requestHeaders?: Record<string, string> | undefined
     title?: string | undefined
   },
-): Promise<{ success: boolean; message?: string }> {
-  const wsUrl = cfg.veloUrl
-  return new Promise((resolve) => {
-    try {
-      if (veloWs && veloWsReady && veloWs.readyState === WebSocket.OPEN) {
-        veloWsSendM3u8(veloWs, m3u8Text, baseUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
-        resolve({ success: true })
-        return
-      }
-      const ws = new WebSocket(wsUrl)
-      const timeout = setTimeout(() => {
-        ws.close()
-        resolve({ success: false, message: 'velo 连接超时（确保 velo 已启动并开启推送服务）' })
-      }, 5000)
-      ws.onopen = () => {
-        clearTimeout(timeout)
-        veloWs = ws
-        veloWsReady = true
-        veloWsSendM3u8(ws, m3u8Text, baseUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
-        resolve({ success: true })
-      }
-      ws.onerror = () => {
-        clearTimeout(timeout)
-        veloWs = null
-        veloWsReady = false
-        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + URL 可访问）` })
-      }
-      ws.onclose = () => {
-        veloWs = null
-        veloWsReady = false
-      }
-    } catch (e) {
-      resolve({ success: false, message: (e as Error).message })
-    }
-  })
+): Promise<VeloPushOutcome> {
+  const msg = {
+    version: 1,
+    token: '',
+    action: 'push_m3u8',
+    m3u8_text: m3u8Text,
+    url: undefined as string | undefined,
+    base_url: baseUrl || undefined,
+    headers: buildVeloHeaders(extra, cfg.headerLevel),
+    options: {
+      filename: fileName ?? undefined,
+      output_dir: undefined as string | undefined,
+      merge_format: _cachedConfig.mergeFormat ?? 'ts',
+      extra_headers: undefined as Record<string, string> | undefined,
+    },
+    page_url: extra?.pageUrl,
+    page_title: extra?.title,
+  }
+  logger.info('[download] velo push_m3u8 →', `${m3u8Text.length} chars, baseUrl=${baseUrl}`)
+  return await runVeloPush(msg)
 }
 
 /** 构建认证头集合（导出供测试用） */
@@ -777,83 +833,6 @@ export async function headPreflight(
   }
 }
 
-function veloWsSendUrl(ws: WebSocket, url: string, fileName: string | undefined, token: string, extra?: {
-  pageUrl?: string | undefined
-  contentType?: string | undefined
-  contentDisposition?: string | undefined
-  method?: string | undefined
-  requestBody?: string | undefined
-  cookies?: string | undefined
-  requestHeaders?: Record<string, string> | undefined
-  title?: string | undefined
-}, headerLevel?: HeaderForwardLevel): void {
-  const isM3u8 = /\.m3u8/i.test(url)
-    || /mpegurl/i.test(extra?.contentType ?? '')
-    || /m3u8/i.test(extra?.contentType ?? '')
-  const action = isM3u8 ? 'push_url' : 'push_normal'
-  const msg = {
-    version: 1,
-    token,
-    action,
-    url,
-    base_url: undefined as string | undefined,
-    // === Content-Type/Disposition 透传（移植自 NDM bg.js T() 函数 b["10"]/b["11"]） ===
-    // velo 桌面端可优先使用这些字段而非自己探测，避免重复 HEAD 请求
-    content_type: extra?.contentType ?? undefined,
-    content_disposition: extra?.contentDisposition ?? undefined,
-    // === HTTP 方法 + POST body 透传（移植自 NDM bg.js V.I __0NeatPostData9__） ===
-    // HEAD 探测归一化为 GET：下载语义必然是取响应体，桌面端也会拒绝 HEAD
-    method: normalizeDownloadMethod(extra?.method),
-    post_data: extra?.requestBody ?? undefined,
-    headers: buildVeloHeaders(extra, headerLevel),
-    options: {
-      filename: fileName ?? undefined,
-      output_dir: undefined as string | undefined,
-      merge_format: isM3u8 ? 'mp4' : undefined as string | undefined,
-      extra_headers: undefined as Record<string, string> | undefined,
-    },
-    page_url: extra?.pageUrl,
-    page_title: extra?.title,
-  }
-  const payload = JSON.stringify(msg)
-  logger.info(
-    '[download] velo', action, '→', url,
-    'headers:', msg.headers ? Object.keys(msg.headers) : 'none',
-    'ct:', extra?.contentType ?? '(none)',
-    'cd:', extra?.contentDisposition ? '(set)' : '(none)',
-    'method:', normalizeDownloadMethod(extra?.method),
-  )
-  ws.send(payload)
-}
-
-function veloWsSendM3u8(ws: WebSocket, m3u8Text: string, baseUrl: string, fileName: string | undefined, token: string, extra?: {
-  pageUrl?: string | undefined
-  cookies?: string | undefined
-  requestHeaders?: Record<string, string> | undefined
-  title?: string | undefined
-}, headerLevel?: HeaderForwardLevel): void {
-  const msg = {
-    version: 1,
-    token,
-    action: 'push_m3u8',
-    m3u8_text: m3u8Text,
-    url: undefined as string | undefined,
-    base_url: baseUrl || undefined,
-    headers: buildVeloHeaders(extra, headerLevel),
-    options: {
-      filename: fileName ?? undefined,
-      output_dir: undefined as string | undefined,
-      merge_format: 'mp4',
-      extra_headers: undefined as Record<string, string> | undefined,
-    },
-    page_url: extra?.pageUrl,
-    page_title: extra?.title,
-  }
-  const payload = JSON.stringify(msg)
-  logger.info('[download] velo push_m3u8 →', `${m3u8Text.length} chars, baseUrl=${baseUrl}`, 'headers:', msg.headers ? Object.keys(msg.headers) : 'none')
-  ws.send(payload)
-}
-
 /**
  * velo 推送 DASH 音视频合并下载任务
  *
@@ -871,59 +850,17 @@ export async function sendToVeloDash(
     requestHeaders?: Record<string, string> | undefined
     title?: string | undefined
   },
-): Promise<{ success: boolean; message?: string }> {
-  const wsUrl = cfg.veloUrl
-  return new Promise((resolve) => {
-    try {
-      if (veloWs && veloWsReady && veloWs.readyState === WebSocket.OPEN) {
-        veloWsSendDash(veloWs, videoUrl, audioUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
-        resolve({ success: true })
-        return
-      }
-      const ws = new WebSocket(wsUrl)
-      const timeout = setTimeout(() => {
-        ws.close()
-        resolve({ success: false, message: 'velo 连接超时（确保 velo 已启动并开启推送服务）' })
-      }, 5000)
-      ws.onopen = () => {
-        clearTimeout(timeout)
-        veloWs = ws
-        veloWsReady = true
-        veloWsSendDash(ws, videoUrl, audioUrl, fileName, cfg.veloToken, extra, cfg.headerLevel)
-        resolve({ success: true })
-      }
-      ws.onerror = () => {
-        clearTimeout(timeout)
-        veloWs = null
-        veloWsReady = false
-        resolve({ success: false, message: `velo 连接失败（确保 velo 已启动 + URL 可访问）` })
-      }
-      ws.onclose = () => {
-        veloWs = null
-        veloWsReady = false
-      }
-    } catch (e) {
-      resolve({ success: false, message: (e as Error).message })
-    }
-  })
-}
-
-function veloWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, fileName: string | undefined, token: string, extra?: {
-  pageUrl?: string | undefined
-  cookies?: string | undefined
-  requestHeaders?: Record<string, string> | undefined
-  title?: string | undefined
-}, headerLevel?: HeaderForwardLevel): void {
+): Promise<VeloPushOutcome> {
   const msg = {
     version: 1,
-    token,
+    token: '',
     action: 'push_dash',
     video_url: videoUrl,
     audio_url: audioUrl,
     url: undefined as string | undefined,
     m3u8_text: undefined as string | undefined,
-    base_url: undefined as string | undefined,
-    headers: buildVeloHeaders(extra, headerLevel),
+    base_url: extra?.pageUrl || undefined,
+    headers: buildVeloHeaders(extra, cfg.headerLevel),
     options: {
       filename: fileName ?? undefined,
       output_dir: undefined as string | undefined,
@@ -933,9 +870,8 @@ function veloWsSendDash(ws: WebSocket, videoUrl: string, audioUrl: string, fileN
     page_url: extra?.pageUrl,
     page_title: extra?.title,
   }
-  const payload = JSON.stringify(msg)
-  logger.info('[download] velo push_dash → video:', videoUrl.slice(0, 80), 'audio:', audioUrl.slice(0, 80), 'headers:', msg.headers ? Object.keys(msg.headers) : 'none')
-  ws.send(payload)
+  logger.info('[download] velo push_dash → video:', videoUrl.slice(0, 80), 'audio:', audioUrl.slice(0, 80))
+  return await runVeloPush(msg)
 }
 
 /** PushClient 实例注入（供 background.ts 调用） */
@@ -978,7 +914,7 @@ export async function pushHls(
   m3u8Text: string,
   options?: { mergeFormat?: string },
   extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string>; title?: string },
-): Promise<void> {
+): Promise<PushResult> {
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
   }
@@ -1002,48 +938,14 @@ export async function pushHls(
     page_url: extra?.pageUrl,
     page_title: extra?.title,
   }
-  await pushClientInstance.push(msg)
-}
-
-/** 推送 URL 到 velo 桌面端 */
-export async function pushUrl(
-  url: string,
-  descriptor: MediaDescriptor,
-  options?: { mergeFormat?: string },
-  extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string>; title?: string },
-): Promise<void> {
-  if (!pushClientInstance) {
-    throw new Error('Push client not initialized')
-  }
-  const isM3u8 = isHlsMedia(url, descriptor.contentType)
-  const fileName = buildFileName(descriptor)
-  const level = _cachedConfig.headerLevel
-  const msg = {
-    action: (isM3u8 ? 'push_url' : 'push_normal') as 'push_url' | 'push_normal',
-    url,
-    m3u8_text: undefined as string | undefined,
-    base_url: undefined as string | undefined,
-    content_type: descriptor.contentType || undefined,
-    content_disposition: descriptor.contentDisposition || undefined,
-    method: normalizeDownloadMethod(descriptor.method),
-    headers: buildVeloHeaders(extra, level),
-    options: {
-      filename: fileName || undefined,
-      output_dir: undefined as string | undefined,
-      merge_format: isM3u8 ? (options?.mergeFormat ?? _cachedConfig.mergeFormat ?? 'ts') : '',
-      extra_headers: undefined as Record<string, string> | undefined,
-    },
-    page_url: extra?.pageUrl,
-    page_title: extra?.title,
-  }
-  await pushClientInstance.push(msg)
+  return await pushClientInstance.push(msg)
 }
 
 /** 推送普通媒体到 velo 桌面端 */
 export async function pushNormal(
   descriptor: MediaDescriptor,
   extra?: { pageUrl?: string; cookies?: string; requestHeaders?: Record<string, string>; title?: string },
-): Promise<void> {
+): Promise<PushResult> {
   if (!pushClientInstance) {
     throw new Error('Push client not initialized')
   }
@@ -1068,5 +970,5 @@ export async function pushNormal(
     page_url: extra?.pageUrl,
     page_title: extra?.title,
   }
-  await pushClientInstance.push(msg)
+  return await pushClientInstance.push(msg)
 }

@@ -698,11 +698,17 @@ export default defineContentScript({
           if (action === 'download-m3u8') {
             try {
               const pageTitle = panel.adFilterPageTitle || cleanPageTitle()
-              const r = await sendMessage<{ ok: boolean; filename?: string; error?: string }>({
+              const r = await sendMessage<{ ok: boolean; filename?: string; error?: string; queued?: boolean; pending?: boolean; unconfirmed?: boolean }>({
                 type: 'downloadCleanedM3u8',
                 payload: { tabId: currentTabId, fileName: pageTitle },
               })
-              if (r?.ok) {
+              if (r?.ok && r.queued) {
+                showToast(`✓ ${i18n('download_queued')}`, 'info', 6000)
+              } else if (r?.ok && r.pending) {
+                showToast(`✓ ${i18n('push_pending_confirm')}`, 'info', 6000)
+              } else if (r?.unconfirmed) {
+                showToast(i18n('push_unconfirmed'), 'info', 8000)
+              } else if (r?.ok) {
                 showToast(`✓ 已开始下载 ${r.filename ?? 'cleaned.m3u8'}`, 'success')
               } else {
                 showToast(`下载失败: ${r?.error ?? 'unknown'}`, 'error')
@@ -719,7 +725,7 @@ export default defineContentScript({
             }
             try {
               const pageTitle = cleanPageTitle()
-              const r = await sendMessage<{ success: boolean; message?: string }>({
+              const r = await sendMessage<{ success: boolean; message?: string; queued?: boolean; pending?: boolean; unconfirmed?: boolean }>({
                 type: 'sendToDashDownload',
                 payload: {
                   videoUrl: pair.video.url,
@@ -728,7 +734,13 @@ export default defineContentScript({
                   pageUrl: location.href,
                 },
               })
-              if (r?.success) {
+              if (r?.success && r.queued) {
+                showToast(`✓ ${i18n('download_queued')}`, 'info', 6000)
+              } else if (r?.success && r.pending) {
+                showToast(`✓ ${i18n('push_pending_confirm')}`, 'info', 6000)
+              } else if (r?.unconfirmed) {
+                showToast(i18n('push_unconfirmed'), 'info', 8000)
+              } else if (r?.success) {
                 showToast(r.message ? `✓ ${r.message}` : '✓ DASH 音视频下载已推送', 'success')
               } else {
                 showToast(`下载失败: ${r?.message ?? 'unknown'}`, 'error')
@@ -747,7 +759,7 @@ export default defineContentScript({
             const item = mediaItems.find((m) => m.url === url)
             const pageTitle = cleanPageTitle()
             try {
-              const r = await sendMessage<{ success: boolean; message?: string }>({
+              const r = await sendMessage<{ success: boolean; message?: string; queued?: boolean; pending?: boolean; unconfirmed?: boolean }>({
                 type: 'sendToDownload',
                 payload: {
                   url,
@@ -762,7 +774,13 @@ export default defineContentScript({
                   contentLength: item?.size ? String(item.size) : undefined,
                 },
               })
-              if (!r?.success) {
+              if (r?.success && r.queued) {
+                showToast(`✓ ${i18n('download_queued')}`, 'info', 6000)
+              } else if (r?.success && r.pending) {
+                showToast(`✓ ${i18n('push_pending_confirm')}`, 'info', 6000)
+              } else if (r?.unconfirmed) {
+                showToast(i18n('push_unconfirmed'), 'info', 8000)
+              } else if (!r?.success) {
                 showToast(`下载失败: ${r?.message ?? 'unknown'}`, 'error')
               }
             } catch (err) {
@@ -1133,9 +1151,12 @@ export default defineContentScript({
      *
      * 背景：用户点击下载链接后，请求被 sniffer 接管并推送桌面端，
      * 浏览器原生下载条目被取消，页面本身毫无变化，用户无法判断下载是否开始。
-     * background 通过 downloadPushed 消息推送三阶段状态：
+     * background 通过 downloadPushed 消息推送各阶段状态：
      *   - pending: 已接管，正在发送到客户端（通常毫秒级后被 success/failed 替换，
      *              10s 兜底超时防止 service worker 被回收导致提示常驻）
+     *   - queued: 客户端离线，已进入离线队列，恢复连接后自动补发
+     *   - pending_confirm: velo 已收到，等待用户在 velo 界面确认后才建任务
+     *   - unconfirmed: 已发出但未收到回执（结果未知，勿重复点击，检查 velo 任务列表）
      *   - success: 发送成功（4s 后自动消失）
      *   - failed:  发送失败，浏览器原生下载已恢复（5s 后自动消失）
      *
@@ -1143,7 +1164,7 @@ export default defineContentScript({
      */
     function showDownloadPushedToast(
       payload: {
-        status?: 'pending' | 'success' | 'failed'
+        status?: 'pending' | 'success' | 'queued' | 'pending_confirm' | 'unconfirmed' | 'failed'
         fileName?: string
         client?: string
         message?: string
@@ -1158,6 +1179,18 @@ export default defineContentScript({
       }
       if (payload.status === 'success') {
         showToast(i18n('download_pushed_success', [client, fileName]), 'success', 4000)
+        return
+      }
+      if (payload.status === 'queued') {
+        showToast(i18n('download_queued'), 'info', 6000)
+        return
+      }
+      if (payload.status === 'pending_confirm') {
+        showToast(i18n('push_pending_confirm'), 'info', 6000)
+        return
+      }
+      if (payload.status === 'unconfirmed') {
+        showToast(i18n('push_unconfirmed'), 'info', 8000)
         return
       }
       const reason = payload.message ? ` — ${payload.message}` : ''

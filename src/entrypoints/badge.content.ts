@@ -406,11 +406,32 @@ export default defineContentScript({
             try {
               const tabResp = (await sendMessage<{ tabId?: number }>({ type: 'getCurrentTabId' }))
               const fileName = resolveBadgeFileName()
-              const r = await sendMessage<{ ok: boolean; filename?: string; error?: string }>({
+              const r = await sendMessage<{ ok: boolean; filename?: string; error?: string; queued?: boolean; pending?: boolean; unconfirmed?: boolean }>({
                 type: 'downloadCleanedM3u8',
                 payload: { tabId: tabResp?.tabId ?? 0, fileName: fileName || undefined },
               })
-              if (r?.ok) {
+              if (r?.ok && r.queued) {
+                body.textContent = '✓ ' + i18n('download_queued')
+                btn!.style.background = '#0f766e'
+                setTimeout(() => {
+                  btn!.style.opacity = '0'
+                  setTimeout(() => btn!.remove(), 300)
+                }, 3000)
+              } else if (r?.ok && r.pending) {
+                body.textContent = '✓ ' + i18n('push_pending_confirm')
+                btn!.style.background = '#0f766e'
+                setTimeout(() => {
+                  btn!.style.opacity = '0'
+                  setTimeout(() => btn!.remove(), 300)
+                }, 3000)
+              } else if (r?.unconfirmed) {
+                body.textContent = '? ' + i18n('push_unconfirmed')
+                btn!.style.background = '#b45309'
+                setTimeout(() => {
+                  body.textContent = i18n('badge_download_m3u8')
+                  btn!.style.background = '#059669'
+                }, 4000)
+              } else if (r?.ok) {
                 body.textContent = '✓ ' + i18n('badge_downloaded') + ' ' + (r.filename ?? 'cleaned.m3u8')
                 btn!.style.background = '#0f766e'
                 setTimeout(() => {

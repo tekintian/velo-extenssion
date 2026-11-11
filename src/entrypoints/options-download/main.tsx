@@ -12,8 +12,9 @@ function DownloadPage() {
   const [dlClient, setDlClient] = useState<DlClient>('velo')
   const [rpcUrl, setRpcUrl] = useState('http://127.0.0.1:16816/jsonrpc')
   const [rpcSecret, setRpcSecret] = useState('')
-  const [veloUrl, setVeloUrl] = useState('ws://127.0.0.1:16888/ws')
+  const [veloPort, setVeloPort] = useState('16888')
   const [veloToken, setVeloToken] = useState('')
+  const [ndmUrl, setNdmUrl] = useState('ws://127.0.0.1:10007/download')
   const [showVeloToken, setShowVeloToken] = useState(false)
   const [deliveryMode, setDeliveryMode] = useState('m3u8-file')
   const [headerLevel, setHeaderLevel] = useState<HeaderLevel>('full')
@@ -33,8 +34,7 @@ function DownloadPage() {
       client?: string
       rpcUrl?: string
       rpcSecret?: string
-      veloUrl?: string
-      veloToken?: string
+      ndmUrl?: string
       headerLevel?: string
       mergeFormat?: string
       autoPush?: boolean
@@ -43,11 +43,17 @@ function DownloadPage() {
       setDlClient((dl.client as DlClient) ?? 'velo')
       setRpcUrl(dl.rpcUrl ?? 'http://127.0.0.1:16816/jsonrpc')
       setRpcSecret(dl.rpcSecret ?? '')
-      setVeloUrl(dl.veloUrl ?? 'ws://127.0.0.1:16888/ws')
-      setVeloToken(dl.veloToken ?? '')
+      setNdmUrl(dl.ndmUrl ?? 'ws://127.0.0.1:10007/download')
       setHeaderLevel((dl.headerLevel as HeaderLevel) ?? 'full')
       setMergeFormat((dl.mergeFormat as 'ts' | 'mp4' | 'mkv' | 'keep') ?? 'ts')
       setAutoPush(dl.autoPush ?? false)
+    }
+
+    // 端口与 Token 的唯一来源是配对存储，不再从下载配置读取
+    const pairing = await request<{ pairing?: { port?: number; token?: string } }>('velo-get-pairing')
+    if (pairing?.pairing) {
+      setVeloPort(String(pairing.pairing.port ?? 16888))
+      setVeloToken(pairing.pairing.token ?? '')
     }
 
     const full = await request<{ mode?: string }>('getHlsFullConfig')
@@ -59,8 +65,7 @@ function DownloadPage() {
       client: dlClient,
       rpcUrl,
       rpcSecret,
-      veloUrl,
-      veloToken,
+      ndmUrl,
       headerLevel,
       mergeFormat,
       autoPush,
@@ -70,6 +75,17 @@ function DownloadPage() {
       alert(i18n('options_save_failed'))
       return
     }
+    if (dlClient === 'velo') {
+      const port = Number.parseInt(veloPort, 10)
+      const saved = await request('velo-save-pairing', {
+        token: veloToken,
+        port: Number.isFinite(port) && port > 0 ? port : 16888,
+      })
+      if (!saved) {
+        alert(i18n('options_save_failed'))
+        return
+      }
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -78,12 +94,18 @@ function DownloadPage() {
     if (!testUrl) return
     setTesting(true)
     setTestResult(null)
-    const r = await request<{ success?: boolean; message?: string }>('sendToDownload', {
+    const r = await request<{ success?: boolean; message?: string; queued?: boolean; pending?: boolean; unconfirmed?: boolean }>('sendToDownload', {
       url: testUrl,
       pageUrl: testUrl,
     })
     if (!r) {
       setTestResult(`✗ ${i18n('options_test_failed')}`)
+    } else if (r.queued) {
+      setTestResult(`⏳ ${i18n('download_queued')}`)
+    } else if (r.pending) {
+      setTestResult(`⏳ ${i18n('push_pending_confirm')}`)
+    } else if (r.unconfirmed) {
+      setTestResult(`? ${i18n('push_unconfirmed')}`)
     } else {
       setTestResult(r.success ? i18n('options_download_sent') : `✗ ${r.message ?? i18n('options_test_failed')}`)
     }
@@ -152,6 +174,14 @@ function DownloadPage() {
               <span className="url-label">{i18n('options_default_url')}:</span>
               <code className="url-code">ws://127.0.0.1:10007/download</code>
             </div>
+            <label>
+              <span className="field-label">{i18n('options_ndm_url')}</span>
+              <input
+                value={ndmUrl}
+                onChange={(e) => setNdmUrl(e.target.value)}
+                placeholder="ws://127.0.0.1:10007/download"
+              />
+            </label>
             <div className="hint-box">{i18n('options_ndm_hint')}</div>
           </div>
         )}
@@ -163,11 +193,14 @@ function DownloadPage() {
               <code className="url-code">ws://127.0.0.1:16888/ws</code>
             </div>
             <label>
-              <span className="field-label">{i18n('options_velo_url')}</span>
+              <span className="field-label">{i18n('options_velo_port')}</span>
               <input
-                value={veloUrl}
-                onChange={(e) => setVeloUrl(e.target.value)}
-                placeholder="ws://127.0.0.1:16888/ws"
+                type="number"
+                min={1}
+                max={65535}
+                value={veloPort}
+                onChange={(e) => setVeloPort(e.target.value)}
+                placeholder="16888"
               />
             </label>
             <label>

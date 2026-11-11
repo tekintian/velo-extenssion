@@ -467,9 +467,6 @@
   "options_push_title": {
     "message": "推送配置"
   },
-  "options_push_channel_label": {
-    "message": "推送通道"
-  },
   "options_merge_format_label": {
     "message": "合并格式"
   },
@@ -628,8 +625,8 @@
   "options_rpc_secret_placeholder": {
     "message": "留空表示无密钥"
   },
-  "options_velo_url": {
-    "message": "推送地址"
+  "options_velo_port": {
+    "message": "推送端口"
   },
   "options_velo_token": {
     "message": "配对 Token"
@@ -637,14 +634,17 @@
   "options_velo_token_placeholder": {
     "message": "从 velo 配对二维码获取"
   },
+  "options_ndm_url": {
+    "message": "NDM 连接地址"
+  },
   "options_ndm_hint": {
-    "message": "NDM 桌面端使用固定地址，无需额外配置。请确保 NDM 桌面端已启动。"
+    "message": "默认指向 NDM 桌面端 ws://127.0.0.1:10007/download。若改用 velo 内置的 NDM 兼容通道，请填 ws://127.0.0.1:16888/download（16888 为 velo 推送端口，可在 velo 设置中修改）。"
   },
   "options_native_hint": {
     "message": "浏览器原生下载使用 Chrome 内置下载管理器，点击媒体项的下载按钮即可触发下载。"
   },
   "options_velo_hint": {
-    "message": "velo (Motrix Lite) 通过 WebSocket 接收推送。确保 velo 已启动并开启推送服务（默认地址 ws://127.0.0.1:16888/ws）。HLS 投递模式为 data-url 时，将直接推送 cleaned m3u8 文本，无需 data URL 编码。"
+    "message": "velo (Motrix Lite) 通过 WebSocket 接收推送。确保 velo 已启动并开启推送服务（默认端口 16888，路径 /ws）。HLS 投递模式为 data-url 时，将直接推送 cleaned m3u8 文本，无需 data URL 编码。"
   },
   "options_hls_delivery_mode": {
     "message": "投递模式"
@@ -855,6 +855,18 @@
         "content": "$2"
       }
     }
+  },
+  "download_queued": {
+    "message": "velo 未连接，任务已排队，连接恢复后自动发送"
+  },
+  "push_unconfirmed": {
+    "message": "已发送但未收到 velo 确认（请先检查 velo 任务列表，避免重复下载）"
+  },
+  "push_pending_confirm": {
+    "message": "velo 已收到，等待你在 velo 界面确认后开始下载"
+  },
+  "push_client_not_ready": {
+    "message": "推送客户端未就绪（请先在下载设置页完成与 velo 的配对）"
   },
   "options_test_input_title": {
     "message": "输入测试参数"

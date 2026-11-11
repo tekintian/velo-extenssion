@@ -1,15 +1,15 @@
 /**
- * push-client 单元测试（task #10/#11: HTTP + DeepLink 通道）
+ * push-client 单元测试（WS 通道）
  *
- * 覆盖 ws/http/deep-link 三种通道的 connect/disconnect/push 行为：
- *   ① ws 通道：connect 创建 WebSocket
- *   ② http 通道：connect 启动健康检查定时器，不创建 WebSocket
- *   ③ deep-link 通道：connect 标记 connected=true，无网络连接
- *   ④ http push 失败 → 入队
- *   ⑤ deep-link push → chrome.tabs.create with velo:// URL
+ * 扩展端推送通道已收敛为单一 WS 通道（velo-ext.v1），
+ * HTTP / deep-link 两条半成品通道已删除，此处仅覆盖 WS 行为：
+ *   ① connect 创建 WebSocket 并携带子协议
+ *   ② disconnect 关闭 WebSocket
+ *   ③ 未连接时 push 入队（离线队列）
+ *   ④ 连接成功后 push 直接发送并等待 request_id 回执
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('@/lib/storage', () => ({
   persistentStorage: {
@@ -27,24 +27,44 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+vi.mock('@/background/pairing', () => ({
+  getExtensionIdentity: vi.fn(() => ({
+    extension_id: 'test-ext',
+    device_name: 'test-device',
+  })),
+}))
+
 const mockWsSend = vi.fn()
 const mockWsClose = vi.fn()
-const mockFetch = vi.fn()
-const mockTabsCreate = vi.fn()
 
-vi.stubGlobal('WebSocket', vi.fn().mockImplementation(() => ({
-  onopen: null,
-  onmessage: null,
-  onclose: null,
-  onerror: null,
-  readyState: 1,
-  send: mockWsSend,
-  close: mockWsClose,
-})))
+interface FakeWs {
+  onopen: (() => void) | null
+  onmessage: ((e: { data: string }) => void) | null
+  onclose: (() => void) | null
+  onerror: (() => void) | null
+  readyState: number
+  send: typeof mockWsSend
+  close: typeof mockWsClose
+}
 
-vi.stubGlobal('fetch', mockFetch)
-vi.stubGlobal('btoa', (s: string) => Buffer.from(s, 'binary').toString('base64'))
-vi.stubGlobal('TextEncoder', TextEncoder)
+let lastWs: FakeWs | null = null
+
+const WebSocketMock = vi.fn().mockImplementation(() => {
+  const inst: FakeWs = {
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+    readyState: 1,
+    send: mockWsSend,
+    close: mockWsClose,
+  }
+  lastWs = inst
+  return inst
+})
+Object.assign(WebSocketMock, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
+
+vi.stubGlobal('WebSocket', WebSocketMock)
 
 vi.stubGlobal('chrome', {
   action: {
@@ -61,178 +81,77 @@ vi.stubGlobal('chrome', {
   tabs: {
     query: vi.fn().mockImplementation((_, cb) => cb([])),
     sendMessage: vi.fn(),
-    create: mockTabsCreate,
   },
   runtime: {
     getURL: vi.fn((p: string) => `chrome-extension://fake/${p}`),
   },
 })
 
-import { createPushClient } from '@/background/push-client'
+import { createPushClient, PushUnconfirmedError } from '@/background/push-client'
 
-describe('PushClient — ws channel (回归)', () => {
+const flushMicro = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}
+
+/** 过滤掉 onopen 阶段的握手消息，只返回业务推送消息 */
+const pushSends = (): { action: string; request_id: number }[] =>
+  mockWsSend.mock.calls
+    .map((c) => JSON.parse(c[0] as string) as { action: string; request_id: number })
+    .filter((m) => m.action !== 'handshake')
+
+describe('PushClient — ws channel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    lastWs = null
   })
 
-  it('connect 创建 WebSocket 到 ws://127.0.0.1:{port}/ws', async () => {
-    // connectWs 先 HTTP 探活 /health，探活通过后才 new WebSocket，
-    // 因此必须等待异步链路完成，不能同步断言（否则必然是 0 次调用）。
-    mockFetch.mockResolvedValue({ ok: true } as Response)
-    const client = createPushClient('ws', 16888, 'test-token')
+  it('connect 创建 WebSocket 到 ws://127.0.0.1:{port}/ws 并带子协议', () => {
+    const client = createPushClient(16888, 'test-token')
     client.connect()
-    await vi.waitFor(() => {
-      expect(WebSocket).toHaveBeenCalledWith('ws://127.0.0.1:16888/ws', ['velo-ext.v1'])
-    })
+    expect(WebSocket).toHaveBeenCalledWith('ws://127.0.0.1:16888/ws', ['velo-ext.v1'])
     client.disconnect()
   })
 
-  it('disconnect 关闭 WebSocket', async () => {
-    mockFetch.mockResolvedValue({ ok: true } as Response)
-    const client = createPushClient('ws', 16888, 'test-token')
+  it('disconnect 关闭 WebSocket', () => {
+    const client = createPushClient(16888, 'test-token')
     client.connect()
-    await vi.waitFor(() => {
-      expect(WebSocket).toHaveBeenCalled()
-    })
     client.disconnect()
     expect(mockWsClose).toHaveBeenCalled()
   })
 
-  it('push 不连接时入队', async () => {
-    const client = createPushClient('ws', 16888, 'test-token')
-    await client.push({ action: 'push_normal', url: 'https://example.com/video.mp4' })
-    // 入队后 queue 持久化
-    // 不抛错即可
+  it('未连接时 push 入队并返回 queued=true（不抛错）', async () => {
+    const client = createPushClient(16888, 'test-token')
+    const r = await client.push({ action: 'push_normal', url: 'https://example.com/video.mp4' })
+    expect(r.queued).toBe(true)
+    expect(mockWsSend).not.toHaveBeenCalled()
+    client.disconnect()
   })
-})
 
-describe('PushClient — http channel (task #10)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
+  it('连接后 push 立即发送，收到 request_id 回执返回 queued=false', async () => {
+    const client = createPushClient(16888, 'test-token')
+    client.connect()
+    lastWs?.onopen?.()
+    const p = client.push({ action: 'push_normal', url: 'https://example.com/video.mp4' })
+    await flushMicro()
+    const sends = pushSends()
+    expect(sends).toHaveLength(1)
+    lastWs?.onmessage?.({ data: JSON.stringify({ ok: true, request_id: sends[0]!.request_id }) })
+    await expect(p).resolves.toEqual({ queued: false })
+    client.disconnect()
+  })
+
+  it('已发送但回执超时 → reject PushUnconfirmedError（不再静默当作成功）', async () => {
     vi.useFakeTimers()
-  })
-
-  afterEach(() => {
+    const client = createPushClient(16888, 'test-token')
+    client.connect()
+    lastWs?.onopen?.()
+    const p = client.push({ action: 'push_normal', url: 'https://example.com/video.mp4' })
+    p.catch(() => { /* 避免未处理拒绝告警 */ })
+    await flushMicro()
+    expect(pushSends()).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(20000)
+    await expect(p).rejects.toBeInstanceOf(PushUnconfirmedError)
     vi.useRealTimers()
-  })
-
-  it('connect 不创建 WebSocket（HTTP 通道无持久连接）', () => {
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    expect(WebSocket).not.toHaveBeenCalled()
-  })
-
-  it('connect 触发首次健康检查（fetch GET /health）', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true } as Response)
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    // 等待 fetch 调用
-    await vi.waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://127.0.0.1:16888/health',
-        expect.objectContaining({ method: 'GET' }),
-      )
-    })
-    client.disconnect()
-  })
-
-  it('健康检查失败 → 调用 chrome.action.setBadgeText 标记错误', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('network error'))
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    await vi.waitFor(() => {
-      expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '!' })
-    })
-    client.disconnect()
-  })
-
-  it('健康检查 OK → 清除 badge', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true } as Response)
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    await vi.waitFor(() => {
-      expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '' })
-    })
-    client.disconnect()
-  })
-
-  it('push 成功 → fetch POST /push with JSON body', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true } as Response) // 健康检查
-    mockFetch.mockResolvedValueOnce({ ok: true } as Response) // push
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    // 等健康检查完成
-    await vi.waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled()
-    })
-    await client.push({ action: 'push_normal', url: 'https://example.com/v.mp4' })
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:16888/push',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-    client.disconnect()
-  })
-
-  it('push 失败 → 入队（不抛错）', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true } as Response) // 健康检查
-    mockFetch.mockRejectedValueOnce(new Error('connection refused')) // push 失败
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    await vi.waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled()
-    })
-    await client.push({ action: 'push_normal', url: 'https://example.com/v.mp4' })
-    // 不抛错即可（已入队）
-    client.disconnect()
-  })
-
-  it('健康检查失败 → 触发 3 步排查 alert 通知', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('connection refused'))
-    const client = createPushClient('http', 16888, 'test-token')
-    client.connect()
-    await vi.waitFor(() => {
-      expect(chrome.tabs.query).toHaveBeenCalled()
-    })
-    client.disconnect()
-  })
-})
-
-describe('PushClient — deep-link channel (task #11)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  it('connect 不创建 WebSocket 和不调 fetch', () => {
-    const client = createPushClient('deep-link', 16888, 'test-token')
-    client.connect()
-    expect(WebSocket).not.toHaveBeenCalled()
-    // 健康检查不应触发（deep-link 无健康检查）
-    // 不抛错即可
-  })
-
-  it('push → chrome.tabs.create with velo:// URL', async () => {
-    mockTabsCreate.mockResolvedValueOnce({ id: 1 })
-    const client = createPushClient('deep-link', 16888, 'test-token')
-    client.connect()
-    await client.push({ action: 'push_normal', url: 'https://example.com/v.mp4' })
-    expect(mockTabsCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: expect.stringMatching(/^velo:\/\/push\?data=/),
-        active: false,
-      }),
-    )
-    client.disconnect()
-  })
-
-  it('push 失败 → 入队（不抛错）', async () => {
-    mockTabsCreate.mockRejectedValueOnce(new Error('chrome.tabs.create failed'))
-    const client = createPushClient('deep-link', 16888, 'test-token')
-    client.connect()
-    await client.push({ action: 'push_normal', url: 'https://example.com/v.mp4' })
-    // 不抛错即可
     client.disconnect()
   })
 })
