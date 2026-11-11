@@ -53,5 +53,5 @@
   "peerDependencies": {
     "typescript": "^5.9.3"
   },
-  "peerAppVersion": "^1.1.0"
+  "peerAppVersion": "^1.2.0"
 }
