@@ -44,6 +44,7 @@ import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
 import { extractItagFromUrl, resolveItagLabel } from '@/background/media/youtube-itags'
 import { sendMessage, sendMessageFireAndForget, onMessageAddListener } from '@/lib/runtime'
+import { isBadName } from '@/lib/naming'
 
 const PANEL_CLASS = '__velo_player_panel__'
 const STYLE_ID = '__velo_player_panel_style__'
@@ -1240,14 +1241,29 @@ export default defineContentScript({
 
     const PLAYER_NAME_RE = /^(?:H5\s*Player|Player|Video\s*Player|JW?Player|Flowplayer|Video\.js|Plyr|DPlayer|CKPlayer|Aliplayer|TCPlayer|GrindPlayer|prismplayer|xgplayer)$/i
 
+    /**
+     * 页面标题是否为"播放器壳页面"标题（如「DPlayer播放器」「index」）
+     *
+     * 播放器 iframe 页面（dplayer.html / index.php?url=...）的 document.title 是
+     * 播放器本身的名称，对文件命名毫无信息量；此时必须使用顶层页面标题。
+     */
+    function isShellTitle(t: string): boolean {
+      if (!t) return true
+      if (isBadName(t)) return true
+      if (PLAYER_NAME_RE.test(t)) return true
+      return false
+    }
+
     function resolveFileName(): string | undefined {
       const videoEl = document.querySelector('video[title]') as HTMLVideoElement | null
       if (videoEl?.title?.trim()) {
-        return sanitizeFileName(videoEl.title.trim())
+        const vt = sanitizeFileName(videoEl.title.trim())
+        if (vt && !isShellTitle(vt)) return vt
       }
       const audioEl = document.querySelector('audio[title]') as HTMLAudioElement | null
       if (audioEl?.title?.trim()) {
-        return sanitizeFileName(audioEl.title.trim())
+        const at = sanitizeFileName(audioEl.title.trim())
+        if (at && !isShellTitle(at)) return at
       }
 
       const playerContainer = document.querySelector('video')?.closest('div[class], div[id], section, article')
@@ -1255,31 +1271,57 @@ export default defineContentScript({
       if (playerContainer) {
         const heading = playerContainer.querySelector('h1, h2')
         if (heading?.textContent?.trim()) {
-          return sanitizeFileName(heading.textContent.trim())
+          const h = sanitizeFileName(heading.textContent.trim())
+          if (h && !isShellTitle(h)) return h
         }
       }
       const mainH1 = document.querySelector('h1')
       if (mainH1?.textContent?.trim()) {
-        return sanitizeFileName(mainH1.textContent.trim())
+        const h = sanitizeFileName(mainH1.textContent.trim())
+        if (h && !isShellTitle(h)) return h
       }
 
-      let title = document.title.trim()
-      if (title && !PLAYER_NAME_RE.test(title)) {
-        title = title
-          .replace(/[-_]\s*哔哩哔哩_bilibili$/i, '')
-          .replace(/[-_]\s*bilibili$/i, '')
-          .replace(/[-_]\s*哔哩哔哩$/i, '')
-          .replace(/\s*[-–—]\s*YouTube$/i, '')
-          .replace(/\s*[-–—]\s*爱奇艺$/i, '')
-          .replace(/[-_]\s*优酷.*$/i, '')
-          .replace(/[-_]\s*腾讯视频.*$/i, '')
-          .replace(/[-_]\s*西瓜视频.*$/i, '')
-          .replace(/[-_]\s*抖音.*$/i, '')
-        title = title.replace(/[\\/:*?"<>|\r\n]/g, '_').trim()
-        if (title) return title
+      // 本 frame（播放器 iframe）标题无信息量时，改用顶层页面标题：
+      // 播放器壳页面标题（DPlayer播放器 / index）永远不能作为下载文件名
+      const frameTitle = sanitizeFileName(document.title.trim())
+      if (frameTitle && !isShellTitle(frameTitle)) return frameTitle
+
+      if (!isTopFrame()) {
+        const topTitle = sanitizeFileName(stripSiteSuffix(documentTopTitle()))
+        if (topTitle && !isShellTitle(topTitle)) return topTitle
       }
 
-      return fileNameFromUrl(location.href)
+      return undefined
+    }
+
+    function stripSiteSuffix(raw: string): string {
+      return raw.trim()
+        .replace(/[-_]\s*哔哩哔哩_bilibili$/i, '')
+        .replace(/[-_]\s*bilibili$/i, '')
+        .replace(/[-_]\s*哔哩哔哩$/i, '')
+        .replace(/\s*[-–—]\s*YouTube$/i, '')
+        .replace(/\s*[-–—]\s*爱奇艺$/i, '')
+        .replace(/[-_]\s*优酷.*$/i, '')
+        .replace(/[-_]\s*腾讯视频.*$/i, '')
+        .replace(/[-_]\s*西瓜视频.*$/i, '')
+        .replace(/[-_]\s*抖音.*$/i, '')
+    }
+
+    function isTopFrame(): boolean {
+      try {
+        return window.self === window.top
+      } catch {
+        return false
+      }
+    }
+
+    function documentTopTitle(): string {
+      try {
+        if (isTopFrame()) return document.title.trim()
+        return window.top?.document?.title?.trim() || ''
+      } catch {
+        return ''
+      }
     }
 
     function sanitizeFileName(name: string): string {
@@ -1289,24 +1331,6 @@ export default defineContentScript({
         .trim()
         .slice(0, 200)
         || undefined as unknown as string
-    }
-
-    function fileNameFromUrl(url: string): string | undefined {
-      try {
-        const u = new URL(url)
-        const path = u.pathname.replace(/\/+$/, '')
-        const lastSegment = path.split('/').pop() ?? ''
-        let candidate = lastSegment.replace(/\.[^.]+$/, '')
-        if (candidate.length < 3) {
-          candidate = path.replace(/\//g, '_').replace(/^_+|_+$/g, '')
-        }
-        candidate = candidate.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/_{2,}/g, '_').trim()
-        if (candidate.length > 20) candidate = candidate.slice(-20)
-        if (candidate.length < 2) candidate = `video_${Date.now().toString(36)}`
-        return candidate
-      } catch {
-        return undefined
-      }
     }
 
     function cleanPageTitle(): string | undefined {

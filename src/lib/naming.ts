@@ -25,7 +25,7 @@ const BAD_SEG_RE =
  * 4~6 位纯数字 + 纯符号串。
  */
 const BAD_NAME_RE =
-  /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|online|play|h5|web|new\s*tab|无标题|untitled|unknown|test|demo|sample|example|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|tempfile|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove|[0-9]{4,6}|\/?[\s*_\-|·]+\/?)$/i
+  /^(?:(?:[a-z0-9_-]+)\s*player|index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|.*\s*播放器|播放器|在线播放|.*\.html|.*\.htm|.*\.php|.*\.m3u8|.*\.mp4|.*\.ts|online|play|h5|web|new\s*tab|无标题|untitled|unknown|test|demo|sample|example|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|tempfile|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove|[0-9]{4,6}|\/?[\s*_\-|·]+\/?)$/i
 
 /**
  * 从 m3u8 URL 提取 baseName（剔除技术段，拼接所有有意义路径段）

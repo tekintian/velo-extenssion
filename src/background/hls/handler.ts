@@ -868,14 +868,20 @@ export function registerHlsHandlers(): void {
       }
 
       // ④ URL path 多段提取（剔除技术段）— 复用 lib/naming.ts 的 extractBaseName
+      //    candidates 已按优先级排好：payloadFileName > 页面标题 > og:title/<title>
       let friendlyName = candidates[0] ?? ''
+      let friendlyFromUrl = false
       if (!friendlyName && pageUrl) {
         friendlyName = extractBaseName(pageUrl)
+        friendlyFromUrl = true
       }
-      if (!friendlyName) friendlyName = ctx.baseName
-      debug += `  ⑤ baseName fallback: ${friendlyName}\n`
+      if (!friendlyName) {
+        friendlyName = ctx.baseName
+        friendlyFromUrl = true
+      }
+      debug += `  ⑤ baseName fallback: ${friendlyName} (fromUrl=${friendlyFromUrl})\n`
       friendlyName = sanitize(friendlyName)
-      if (friendlyName.length > 50) friendlyName = friendlyName.slice(-50)
+      if (friendlyFromUrl && friendlyName.length > 50) friendlyName = friendlyName.slice(-50)
       debug += `  → FINAL friendlyName: ${friendlyName}\n`
       logger.info('[resolveName]', debug)
 

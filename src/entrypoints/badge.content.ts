@@ -21,6 +21,7 @@ import { logger } from '@/lib/logger'
 import { i18n } from '@/lib/i18n'
 import { sendMessage, onMessageAddListener } from '@/lib/runtime'
 import { openSampleCard } from '@/lib/sample-confirm'
+import { extractBaseName, isBadName } from '@/lib/naming'
 
 const BADGE_ID = '__adclear_hls_badge__'
 const STYLE_ID = '__adclear_hls_badge_style__'
@@ -29,26 +30,14 @@ const DL_BTN_ID = '__adclear_dl_btn'
 const FADE_MS = 12000
 const VISIBLE_MS = 6000
 
-const BAD_TITLE_RE =
-  /^(?:index|home|homepage|main|default|start|top|bottom|left|right|middle|center|content|body|page|p|menu|header|footer|sidebar|aside|section|wrapper|container|app|root|layout|component|video|player|h5\s*player|web\s*player|online\s*player|online|play|index\.html|home\.html|main\.html|default\.html|404|500|error|not\s*found|loading|正在加载|加载中|页面加载中|new\s*tab|新标签页|无标题|无标题文档|untitled|unknown|test|demo|sample|example|mixed|playlist|master|vod|hls|dash|audio|segment|segments|ts|m3u8|mp4|flv|3gp|img|images|image|photo|pic|thumb|thumbnail|cdn|static|public|assets|resource|resources|file|files|stream|streams|media|live|origin|backup|temp|tmp|cache|tempfile|downloads|download|upload|uploads|api|admin|user|login|register|auth|profile|search|list|all|new|create|edit|delete|update|view|show|add|remove)$/i
-
 function resolveBadgeFileName(): string | undefined {
-  function isMeaningful(name: string | null | undefined): boolean {
-    if (!name) return false
-    const trimmed = name.trim()
-    if (!trimmed) return false
-    if (trimmed.length < 3) return false
-    if (BAD_TITLE_RE.test(trimmed)) return false
-    if (!/[\u4e00-\u9fa5a-zA-Z0-9]/.test(trimmed)) return false
-    return true
-  }
   function sanitize(n: string): string {
     return n.replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/_{2,}/g, '_').trim().slice(0, 200)
   }
   const og = document.querySelector('meta[property="og:title"]') as HTMLMetaElement | null
   if (og?.content?.trim()) {
     const t = sanitize(og.content.trim())
-    if (isMeaningful(t)) return t
+    if (!isBadName(t)) return t
   }
   let title = document.title.trim()
   if (title) {
@@ -63,23 +52,9 @@ function resolveBadgeFileName(): string | undefined {
       .replace(/\s*[-_]\s*西瓜视频.*$/i, '')
       .replace(/\s*[-_]\s*抖音.*$/i, '')
     title = sanitize(title)
-    if (isMeaningful(title)) return title
+    if (!isBadName(title)) return title
   }
-  try {
-    const u = new URL(location.href)
-    const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
-    const meaningful = segs
-      .map((s) => s.replace(/\.[^.]+$/, ''))
-      .filter((s) => s.length >= 3 && !BAD_TITLE_RE.test(s))
-    let name = meaningful.join('_')
-    if (!name) {
-      const fallback = segs.map((s) => s.replace(/\.[^.]+$/, '')).filter((s) => !BAD_TITLE_RE.test(s))
-      name = fallback.join('_') || u.hostname.replace(/^www\./, '')
-    }
-    return sanitize(name)
-  } catch {
-    return undefined
-  }
+  return extractBaseName(location.href)
 }
 
 export default defineContentScript({

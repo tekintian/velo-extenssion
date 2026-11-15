@@ -112,5 +112,22 @@ describe('naming', () => {
       expect(isBadName('  ab  ')).toBe(true)  // trim 后长度 2
       expect(isBadName('  abc  ')).toBe(false) // trim 后长度 3
     })
+
+    it('播放器壳页面名返回 true（应回退到页面标题）', () => {
+      expect(isBadName('DPlayer播放器')).toBe(true)
+      expect(isBadName('dplayer播放器')).toBe(true)
+      expect(isBadName('ckplayer播放器')).toBe(true)
+      expect(isBadName('H5 Player')).toBe(true)
+      expect(isBadName('web player')).toBe(true)
+      expect(isBadName('DPlayer')).toBe(true)
+      expect(isBadName('播放器')).toBe(true)
+      expect(isBadName('在线播放')).toBe(true)
+    })
+
+    it('页面脚本名返回 true', () => {
+      expect(isBadName('index.php')).toBe(true)
+      expect(isBadName('index.html')).toBe(true)
+      expect(isBadName('playlist.m3u8')).toBe(true)
+    })
   })
 })
