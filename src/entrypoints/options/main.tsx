@@ -79,6 +79,7 @@ const PAGES = [
 
 function OptionsIndex() {
   const [paired, setPaired] = useState(false)
+  const [connected, setConnected] = useState(false)
   const [hlsEnabled, setHlsEnabled] = useState(true)
   const [version] = useState(() => chrome.runtime.getManifest().version)
 
@@ -87,8 +88,11 @@ function OptionsIndex() {
   }, [])
 
   async function loadStatus() {
-    const resp = await request<{ paired?: boolean }>('velo-get-status')
-    if (resp) setPaired(resp.paired ?? false)
+    const resp = await request<{ paired?: boolean; connected?: boolean }>('velo-get-status')
+    if (resp) {
+      setPaired(resp.paired ?? false)
+      setConnected(resp.connected ?? false)
+    }
 
     const full = await request<{ enableAdSkip?: boolean }>('getHlsFullConfig')
     if (full) setHlsEnabled(full.enableAdSkip ?? true)
@@ -103,8 +107,12 @@ function OptionsIndex() {
           <p className="options-subtitle">v{version} · {i18n('options_subtitle')}</p>
         </div>
         <div className="options-header-badges">
-          <span className={`options-badge ${paired ? 'badge-ok' : 'badge-err'}`}>
-            {paired ? `✅ ${i18n('popup_connected')}` : `❌ ${i18n('popup_not_paired')}`}
+          <span className={`options-badge ${connected ? 'badge-ok' : paired ? 'badge-warn' : 'badge-err'}`}>
+            {connected
+              ? `✅ ${i18n('popup_connected')}`
+              : paired
+                ? `⚠️ ${i18n('popup_paired_disconnected')}`
+                : `❌ ${i18n('popup_not_paired')}`}
           </span>
           <span className={`options-badge ${hlsEnabled ? 'badge-ok' : 'badge-err'}`}>
             {hlsEnabled ? `🟢 ${i18n('popup_enabled')}` : `⚪ ${i18n('popup_disabled')}`}

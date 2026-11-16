@@ -22,8 +22,14 @@
   "popup_pair_button": {
     "message": "配对桌面端"
   },
-  "popup_repair_button": {
-    "message": "重新配对"
+  "popup_repair_confirm": {
+    "message": "清除本地配对记录并重新配对桌面端？\n（不会影响桌面端已保存的授权，仅重新建立连接）"
+  },
+  "popup_repair_hint": {
+    "message": "点击可重新配对"
+  },
+  "popup_paired_disconnected": {
+    "message": "已配对，未连接"
   },
   "popup_settings_button": {
     "message": "设置"
@@ -48,17 +54,6 @@
   },
   "popup_pair_error": {
     "message": "配对出错：$ERROR$",
-    "placeholders": {
-      "ERROR": {
-        "content": "$1"
-      }
-    }
-  },
-  "popup_clear_success": {
-    "message": "已清除配对"
-  },
-  "popup_clear_error": {
-    "message": "清除配对出错：$ERROR$",
     "placeholders": {
       "ERROR": {
         "content": "$1"
@@ -846,7 +841,7 @@
     }
   },
   "download_pushed_failed": {
-    "message": "✗ 推送到 $CLIENT$ 失败：$ERROR$（请重试下载）",
+    "message": "✗ 推送到 $CLIENT$ 失败：$ERROR$，已改为浏览器原生下载",
     "placeholders": {
       "CLIENT": {
         "content": "$1"
@@ -857,7 +852,15 @@
     }
   },
   "download_queued": {
-    "message": "velo 未连接，任务已排队，连接恢复后自动发送"
+    "message": "velo 未连接，任务已加入 velo 离线队列，连接恢复后自动发送（浏览器不会下载）"
+  },
+  "download_native_fallback": {
+    "message": "velo 未连接，已改为浏览器原生下载：$FILE$",
+    "placeholders": {
+      "FILE": {
+        "content": "$1"
+      }
+    }
   },
   "push_unconfirmed": {
     "message": "已发送但未收到 velo 确认（请先检查 velo 任务列表，避免重复下载）"

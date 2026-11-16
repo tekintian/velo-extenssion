@@ -107,6 +107,16 @@ body {
   text-overflow: ellipsis;
 }
 
+.popup-client-bar.popup-client-bar-action {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.popup-client-bar.popup-client-bar-action:hover {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  filter: brightness(0.98);
+}
+
 .popup-group {
   display: flex;
   flex-direction: column;

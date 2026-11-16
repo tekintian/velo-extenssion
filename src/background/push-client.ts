@@ -488,5 +488,15 @@ export function createPushClient(port: number, token: string) {
   // 模块初始化时预加载队列（不阻塞，但 push 时会 await）
   void ensureQueueLoaded()
 
-  return { connect, disconnect, push }
+  /**
+   * 当前是否与桌面端保持活跃连接（WS OPEN）
+   *
+   * 调用方据此判断「推送能否即时送达」：未连接时 push() 只会进离线队列，
+   * 自动接管场景需要改走浏览器原生下载，而不是让用户以为下载已开始。
+   */
+  function isConnected(): boolean {
+    return connected && ws?.readyState === WebSocket.OPEN
+  }
+
+  return { connect, disconnect, push, isConnected }
 }

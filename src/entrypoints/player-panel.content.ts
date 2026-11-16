@@ -704,7 +704,7 @@ export default defineContentScript({
                 payload: { tabId: currentTabId, fileName: pageTitle },
               })
               if (r?.ok && r.queued) {
-                showToast(`✓ ${i18n('download_queued')}`, 'info', 6000)
+                showToast(`⏳ ${i18n('download_queued')}`, 'info', 6000)
               } else if (r?.ok && r.pending) {
                 showToast(`✓ ${i18n('push_pending_confirm')}`, 'info', 6000)
               } else if (r?.unconfirmed) {
@@ -1165,7 +1165,7 @@ export default defineContentScript({
      */
     function showDownloadPushedToast(
       payload: {
-        status?: 'pending' | 'success' | 'queued' | 'pending_confirm' | 'unconfirmed' | 'failed'
+        status?: 'pending' | 'success' | 'queued' | 'pending_confirm' | 'unconfirmed' | 'failed' | 'native'
         fileName?: string
         client?: string
         message?: string
@@ -1180,6 +1180,10 @@ export default defineContentScript({
       }
       if (payload.status === 'success') {
         showToast(i18n('download_pushed_success', [client, fileName]), 'success', 4000)
+        return
+      }
+      if (payload.status === 'native') {
+        showToast(i18n('download_native_fallback', [fileName]), 'info', 6000)
         return
       }
       if (payload.status === 'queued') {

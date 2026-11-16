@@ -23,6 +23,7 @@ const DL_CLIENT_HOMEPAGES: Record<DlClient, string> = {
 
 function Popup() {
   const [paired, setPaired] = useState(false)
+  const [connected, setConnected] = useState(false)
   const [probing, setProbing] = useState(false)
   const [port, setPort] = useState(16888)
   const [status, setStatus] = useState('')
@@ -48,9 +49,11 @@ function Popup() {
     const resp = await request<{ connected?: boolean; port?: number }>('velo-auto-connect')
     if (resp?.connected) {
       setPaired(true)
+      setConnected(true)
       if (resp.port) setPort(resp.port)
       setStatus('')
     } else {
+      setConnected(false)
       setStatus(i18n('popup_client_not_found', [DL_CLIENT_LABELS.velo]))
     }
     setProbing(false)
@@ -59,12 +62,14 @@ function Popup() {
   const loadStatus = useCallback(async () => {
     const st = await request<{
       paired?: boolean
+      connected?: boolean
       pairing?: { port?: number }
     }>('velo-get-status')
     if (!st) {
       setStatus(i18n('popup_comm_error'))
     } else {
       setPaired(st.paired ?? false)
+      setConnected(st.connected ?? false)
       if (st.pairing?.port) setPort(st.pairing.port)
       if (!st.paired) void handleAutoConnect()
     }
@@ -123,15 +128,27 @@ function Popup() {
     void loadStatus()
   }, [loadStatus])
 
-  const handleClearPairing = useCallback(async () => {
+  const handleClearPairing = useCallback(async (): Promise<boolean> => {
     const r = await request('velo-clear-pairing')
     if (!r) {
       setStatus(i18n('popup_comm_error'))
-      return
+      return false
     }
     setPaired(false)
+    setConnected(false)
     setStatus('')
+    return true
   }, [])
+
+  /** 点击客户端状态行 → 二次确认后清除本地配对记录，随后自动重新配对 */
+  const handleStatusBarClick = useCallback(() => {
+    if (dlClient !== 'velo' || !paired) return
+    if (!window.confirm(i18n('popup_repair_confirm'))) return
+    void handleClearPairing().then((ok) => {
+      // 清除失败不应继续重连，否则会带来「配对已清但仍连着旧 token」的混乱状态
+      if (ok) void handleAutoConnect()
+    })
+  }, [dlClient, paired, handleClearPairing, handleAutoConnect])
 
   const openHlsFilterOptions = useCallback(() => {
     void chrome.tabs.create({ url: chrome.runtime.getURL('options-hls-filter.html') })
@@ -251,10 +268,14 @@ function Popup() {
     void chrome.runtime.openOptionsPage()
   }, [])
 
-  const clientConnected = dlClient !== 'velo' || paired
+  const clientConnected = dlClient !== 'velo' || connected
 
   const clientValue = dlClient === 'velo'
-    ? paired ? `✅ ${i18n('popup_connected')}` : `❌ ${i18n('popup_not_paired')}`
+    ? connected
+      ? `✅ ${i18n('popup_connected')}`
+      : paired
+        ? `⚠️ ${i18n('popup_paired_disconnected')}`
+        : `❌ ${i18n('popup_not_paired')}`
     : dlClient === 'native'
       ? `🌐 ${i18n('popup_client_browser_download')}`
       : `⚪ ${i18n('popup_client_direct_mode')}`
@@ -289,7 +310,11 @@ function Popup() {
         </button>
       </header>
 
-      <div className={`popup-client-bar ${clientConnected ? 'status-ok' : paired ? 'status-err' : 'status-warn'}`}>
+      <div
+        className={`popup-client-bar ${clientConnected ? 'status-ok' : paired ? 'status-err' : 'status-warn'}${dlClient === 'velo' && paired ? ' popup-client-bar-action' : ''}`}
+        onClick={handleStatusBarClick}
+        title={dlClient === 'velo' && paired ? i18n('popup_repair_hint') : undefined}
+      >
         <span className="status-card-label">{i18n('popup_desktop_client')}</span>
         <span className="status-card-value">{clientValue}</span>
         <span className="status-card-detail">{clientDetail}</span>
@@ -353,11 +378,6 @@ function Popup() {
         {dlClient === 'velo' && !paired && (
           <button className="btn-secondary" onClick={() => void handleAutoConnect()} disabled={probing}>
             {probing ? i18n('popup_probing') : i18n('popup_auto_connect_button')}
-          </button>
-        )}
-        {dlClient === 'velo' && paired && (
-          <button className="btn-ghost" onClick={handleClearPairing}>
-            {i18n('popup_repair_button')}
           </button>
         )}
         {canTempEnable && siteDomain && (

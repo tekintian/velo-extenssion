@@ -22,8 +22,14 @@
   "popup_pair_button": {
     "message": "Pair with Desktop"
   },
-  "popup_repair_button": {
-    "message": "Re-pair"
+  "popup_repair_confirm": {
+    "message": "Clear the local pairing record and re-pair with the desktop app?\n(The authorization saved on the desktop will not be affected; only the connection is re-established.)"
+  },
+  "popup_repair_hint": {
+    "message": "Click to re-pair"
+  },
+  "popup_paired_disconnected": {
+    "message": "Paired, not connected"
   },
   "popup_settings_button": {
     "message": "Settings"
@@ -48,17 +54,6 @@
   },
   "popup_pair_error": {
     "message": "Pairing error: $ERROR$",
-    "placeholders": {
-      "ERROR": {
-        "content": "$1"
-      }
-    }
-  },
-  "popup_clear_success": {
-    "message": "Pairing cleared"
-  },
-  "popup_clear_error": {
-    "message": "Clear pairing error: $ERROR$",
     "placeholders": {
       "ERROR": {
         "content": "$1"
@@ -846,7 +841,7 @@
     }
   },
   "download_pushed_failed": {
-    "message": "✗ Failed to push to $CLIENT$: $ERROR$ (please retry the download)",
+    "message": "✗ Failed to push to $CLIENT$: $ERROR$ — falling back to the browser's native download",
     "placeholders": {
       "CLIENT": {
         "content": "$1"
@@ -857,7 +852,15 @@
     }
   },
   "download_queued": {
-    "message": "velo is not connected; the task has been queued and will be sent automatically after reconnection"
+    "message": "velo is not connected; the task was added to velo's offline queue and will be sent automatically after reconnection (the browser will NOT download it)"
+  },
+  "download_native_fallback": {
+    "message": "velo is not connected; falling back to the browser's native download: $FILE$",
+    "placeholders": {
+      "FILE": {
+        "content": "$1"
+      }
+    }
   },
   "push_unconfirmed": {
     "message": "Sent but no confirmation from velo (check the velo task list first to avoid duplicate downloads)"

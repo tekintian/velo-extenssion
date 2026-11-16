@@ -117,9 +117,46 @@ const tabMediaMap = new Map<number, MediaItem[]>()
 const pushedUrlSet = new Set<string>()
 let lastPushedUrl = ''
 
+/**
+ * 自动接管待决下载条目
+ *
+ * 时序事实：`onBeforeRequest` 里发起推送后，浏览器会立刻创建下载条目并触发
+ * `downloads.onCreated`，而推送结果（成功 / 入队 / 原生回退）是异步才返回的。
+ * 旧实现直接在 `onCreated` 里 cancel + erase，等于「推送还没结果就把浏览器文件删了」，
+ * 推送失败时用户两头落空。
+ *
+ * 现在 `onCreated` 只登记下载 id 到本表，真正的去留由推送结果决定：
+ *   - 推送成功 / 已入队 / 待确认 → 取消浏览器条目（由扩展负责）
+ *   - 原生回退 / 明确失败          → 保留浏览器条目继续下载
+ */
+interface PendingHandoff {
+  /** 浏览器下载条目 id */
+  readonly downloadId: number
+  /** 是否已收到推送结果（结果先到、onCreated 后到的竞态用此标记） */
+  resolved: boolean
+  /** 推送结果：true=扩展负责，false=保留浏览器下载 */
+  keepNative?: boolean
+}
+const pendingHandoffs = new Map<string, PendingHandoff>()
+
+/** 待决表按 URL 索引：一个推送可能对应重定向链上的多个 URL */
+function trackHandoffUrls(urls: readonly string[], downloadId: number): void {
+  for (const u of urls) {
+    if (!u) continue
+    pendingHandoffs.set(u, { downloadId, resolved: false })
+  }
+  // 浏览器始终未触发 onCreated（下载被策略阻止等）时，避免条目长期滞留
+  setTimeout(() => {
+    for (const u of urls) {
+      const entry = pendingHandoffs.get(u)
+      if (entry && entry.downloadId === downloadId) pendingHandoffs.delete(u)
+    }
+  }, 30_000)
+}
+
 /** 下载推送状态载荷（background → content script 的 downloadPushed 消息） */
 interface DownloadPushPayload {
-  readonly status: 'pending' | 'success' | 'queued' | 'pending_confirm' | 'unconfirmed' | 'failed'
+  readonly status: 'pending' | 'success' | 'queued' | 'pending_confirm' | 'unconfirmed' | 'failed' | 'native'
   readonly fileName: string
   readonly client: string
   readonly message?: string | undefined
@@ -128,13 +165,16 @@ interface DownloadPushPayload {
 /**
  * 推送结果回传给页面（顶层 frame）显示 toast
  *
- * 用户点击下载链接后请求被扩展接管，浏览器原生下载条目会被取消，
- * 页面本身不会有任何变化。若没有页面级提示，用户无法判断下载是否已经开始。
+ * 页面本身不会有任何变化，若没有页面级提示，用户无法判断下载走了哪条路径。
  * 这里把推送状态广播给发起页面的 content script（player-panel.content.ts），
  * 由其渲染页面内 toast：
- *   - pending: 已接管，正在发送到下载客户端
- *   - success: 已成功发送
- *   - failed:  发送失败
+ *   - pending:          已接管，正在发送到下载客户端
+ *   - success:          已被客户端接管，浏览器下载条目已取消
+ *   - queued:           进入 velo 离线队列，浏览器不下载（仅用户主动点击时可能）
+ *   - pending_confirm:  客户端已收到，等待确认，浏览器不下载
+ *   - unconfirmed:      已发出但未收到回执，浏览器不下载（避免重复下载）
+ *   - native:           未能接管，改为浏览器原生下载
+ *   - failed:           推送失败，已回退浏览器原生下载
  *
  * 只发送到 frameId 0：player-panel 在所有 frame 注入，广播给所有 frame 会导致
  * 每个 iframe 都弹一个 toast。
@@ -183,6 +223,61 @@ function notifyDownloadPushed(
   payload: DownloadPushPayload,
 ): void {
   void sendDownloadPushedMessage(tabId, payload).catch(() => {})
+}
+
+/**
+ * 判定某个浏览器下载条目的去留（推送结果驱动）
+ *
+ * @param keepNative true=保留浏览器下载（推送没成功接管），false=取消（扩展负责）
+ * @param urls 与该下载相关的 URL（含重定向链），用于定位待决条目
+ */
+function settleHandoff(keepNative: boolean, urls: readonly string[]): void {
+  for (const u of urls) {
+    if (!u) continue
+    const entry = pendingHandoffs.get(u)
+    if (!entry) {
+      // 结果先于 onCreated 到达：登记一个「已裁决」占位，onCreated 时立即生效
+      pendingHandoffs.set(u, { downloadId: -1, resolved: true, keepNative })
+      continue
+    }
+    entry.resolved = true
+    entry.keepNative = keepNative
+    if (entry.downloadId >= 0) applyHandoff(entry.downloadId, keepNative)
+  }
+}
+
+/** 按已登记的结果裁决某个下载条目；未裁决则等待 */
+function resolveHandoff(downloadId: number): void {
+  for (const [, entry] of pendingHandoffs) {
+    if (entry.downloadId === downloadId && entry.resolved) {
+      applyHandoff(downloadId, !!entry.keepNative)
+      return
+    }
+  }
+}
+
+/** 执行裁决：保留原生下载 / 取消并清理条目 */
+function applyHandoff(downloadId: number, keepNative: boolean): void {
+  const relatedUrls: string[] = []
+  for (const [url, entry] of pendingHandoffs) {
+    if (entry.downloadId === downloadId) {
+      relatedUrls.push(url)
+      pendingHandoffs.delete(url)
+    }
+  }
+  // 仅清理本条目相关 URL，避免误伤其它在途推送的去重/取消依据
+  for (const url of relatedUrls) {
+    pushedUrlSet.delete(url)
+    if (lastPushedUrl === url) lastPushedUrl = ''
+  }
+  if (keepNative) {
+    logger.info('[sniffer] handoff: keeping browser native download, id:', downloadId)
+    return
+  }
+  logger.info('[sniffer] handoff: canceling browser download (handled by extension), id:', downloadId)
+  chrome.downloads.cancel(downloadId, () => {
+    chrome.downloads.erase({ id: downloadId })
+  })
 }
 
 /** 最大保留数 */
@@ -620,15 +715,21 @@ export function startSniffer(): void {
             pendingRequests.delete(details.requestId)
             return undefined
           }
-          const hasPushClient = !!getPushClient()
+          const pushClient = getPushClient()
+          const hasPushClient = !!pushClient
+          const pushConnected = !!pushClient?.isConnected()
           const cfg = getCachedDownloadConfig()
-          const hasViableClient = hasPushClient || cfg.client !== 'native'
+          // 自动接管的前提是「推送能即时送达」：桌面端未连接时推送只会进离线队列，
+          // 而浏览器下载已被取消 → 用户既拿不到文件也看不到下载，必须直接放行原生下载。
+          // 外部客户端（aria2/ndm）失败是明确失败（不会静默入队），可安全尝试。
+          const hasExternalClient = cfg.client === 'aria2' || cfg.client === 'ndm'
+          const hasViableClient = pushConnected || hasExternalClient
 
           if (hasViableClient) {
             lastPushedUrl = pending.url
             pushedUrlSet.add(pending.url)
             pushedUrlSet.add(details.url)
-            logger.info('[sniffer] non-media download, auto-pushing to client:', ext, pending.url.slice(0, 80), 'client:', hasPushClient ? 'pushClient' : cfg.client)
+            logger.info('[sniffer] non-media download, auto-pushing to client:', ext, pending.url.slice(0, 80), 'client:', pushConnected ? 'pushClient' : cfg.client)
             // === 获取 pageUrl + cookies（与 NDM bg.js V.J 对齐） ===
             // NDM 流程：V.V → chrome.cookies.getAll({url}, V.J) → V.J 设置 item.cookies → V.I 推送
             // 缺少 Cookie/Referer/Origin 时，服务端不认识会话，返回 HTML 登录/引导页而非真实文件
@@ -726,8 +827,13 @@ export function startSniffer(): void {
                   title,
                   contentLength: size > 0 ? String(size) : undefined,
                   priority: pushPriority,
+                  autoHandoff: true,
                 },
               )
+              // 浏览器下载条目去留：push 接管成功才取消，原生回退/失败则保留
+              const handoffUrls = [pushUrl, details.url]
+              const keepNative = !!result.nativeFallback || (!result.success && !result.unconfirmed)
+              settleHandoff(keepNative, handoffUrls)
               if (result.unconfirmed) {
                 // 已发出但未确认：桌面端可能已建任务，保留去重状态，避免同一 URL 再次推送造成重复下载
                 notifyDownloadPushed(toastTabId, {
@@ -737,10 +843,9 @@ export function startSniffer(): void {
                   message: result.message,
                 })
               } else if (!result.success) {
-                lastPushedUrl = ''
                 pushedUrlSet.delete(pushUrl)
                 pushedUrlSet.delete(details.url)
-                logger.warn('[sniffer] auto-push failed, clearing lastPushedUrl:', result.message, 'url:', pushUrl.slice(0, 80))
+                logger.warn('[sniffer] auto-push failed, keeping browser download:', result.message, 'url:', pushUrl.slice(0, 80))
                 notifyDownloadPushed(toastTabId, {
                   status: 'failed',
                   fileName: toastFileName,
@@ -763,16 +868,16 @@ export function startSniffer(): void {
                 })
               } else {
                 notifyDownloadPushed(toastTabId, {
-                  status: 'success',
+                  status: result.nativeFallback ? 'native' : 'success',
                   fileName: toastFileName,
                   client: clientLabel,
                 })
               }
             })().catch((e) => {
-              lastPushedUrl = ''
               pushedUrlSet.delete(pushUrl)
               pushedUrlSet.delete(details.url)
-              logger.warn('[sniffer] auto-push error, clearing lastPushedUrl:', (e as Error).message, 'url:', pushUrl.slice(0, 80))
+              settleHandoff(true, [pushUrl, details.url])
+              logger.warn('[sniffer] auto-push error, keeping browser download:', (e as Error).message, 'url:', pushUrl.slice(0, 80))
               notifyDownloadPushed(toastTabId, {
                 status: 'failed',
                 fileName: toastFileName,
@@ -971,16 +1076,17 @@ export function startSniffer(): void {
   chrome.downloads.onCreated.addListener((item) => {
     if (!item.url) return
 
-    // 匹配 pushedUrlSet：非媒体下载已自动推送，取消浏览器下载条目
-    // 使用 Set 匹配重定向链中任意 URL（对齐 NDM V.X this.u 匹配逻辑）
+    // 匹配 pushedUrlSet：非媒体下载已自动推送 —— 只登记，不在此处取消
+    //
+    // 推送结果是异步返回的：这里如果直接 cancel + erase，浏览器文件会在推送结果
+    // 出来之前就被删掉，推送失败 / 原生回退时用户两头落空。
+    // 实际去留交给 resolveHandoff()（由推送结果驱动）。
     if (pushedUrlSet.has(item.url) || pushedUrlSet.has(item.finalUrl || '') || (lastPushedUrl && (lastPushedUrl === item.url || lastPushedUrl === item.finalUrl))) {
-      logger.info('[sniffer] downloads.onCreated: matching pushed URL, canceling browser download:', item.url.slice(0, 80))
-      pushedUrlSet.delete(item.url)
-      if (item.finalUrl) pushedUrlSet.delete(item.finalUrl)
-      lastPushedUrl = ''
-      chrome.downloads.cancel(item.id, () => {
-        chrome.downloads.erase({ id: item.id })
-      })
+      logger.info('[sniffer] downloads.onCreated: matching pushed URL, awaiting push result:', item.url.slice(0, 80))
+      const urls = [item.url, item.finalUrl || '', lastPushedUrl]
+      trackHandoffUrls(urls, item.id)
+      // 结果可能已先到（推送极快）→ 立刻按结果裁决
+      resolveHandoff(item.id)
       return
     }
 
@@ -1442,9 +1548,14 @@ function handleFtpOrFileRequest(
         logger.debug('[sniffer]', protocol, 'non-media download already pushed, skipping:', ext, details.url.slice(0, 80))
         return
       }
-      const hasPushClient = !!getPushClient()
+      const pushClient = getPushClient()
+      const pushConnected = !!pushClient?.isConnected()
+      const hasPushClient = !!pushClient
       const cfg = getCachedDownloadConfig()
-      const hasViableClient = hasPushClient || cfg.client !== 'native'
+      // 同 onBeforeRequest 分支：velo 未连接时自动推送只会进离线队列，
+      // 而这里已经标记「自动接管」，会让下载管理器以为浏览器下载已被取代 → 必须放行原生下载。
+      const hasExternalClient = cfg.client === 'aria2' || cfg.client === 'ndm'
+      const hasViableClient = pushConnected || hasExternalClient
 
       if (hasViableClient) {
         lastPushedUrl = details.url
@@ -1476,8 +1587,11 @@ function handleFtpOrFileRequest(
           const result = await sendToDownloadClient(
             details.url,
             fileName,
-            { contentType: contentType || undefined, pageUrl, cookies, title },
+            { contentType: contentType || undefined, pageUrl, cookies, title, autoHandoff: true },
           )
+          // 浏览器下载条目去留：push 接管成功才取消，原生回退/失败则保留
+          const keepNative = !!result.nativeFallback || (!result.success && !result.unconfirmed)
+          settleHandoff(keepNative, [details.url])
           if (result.unconfirmed) {
             // 已发出但未确认：桌面端可能已建任务，保留去重状态，避免同一 URL 再次推送造成重复下载
             notifyDownloadPushed(tabId, {
@@ -1487,9 +1601,8 @@ function handleFtpOrFileRequest(
               message: result.message,
             })
           } else if (!result.success) {
-            lastPushedUrl = ''
             pushedUrlSet.delete(details.url)
-            logger.warn('[sniffer]', protocol, 'auto-push failed, clearing lastPushedUrl:', result.message)
+            logger.warn('[sniffer]', protocol, 'auto-push failed, keeping browser download:', result.message)
             notifyDownloadPushed(tabId, {
               status: 'failed',
               fileName: toastFileName,
@@ -1512,15 +1625,15 @@ function handleFtpOrFileRequest(
             })
           } else {
             notifyDownloadPushed(tabId, {
-              status: 'success',
+              status: result.nativeFallback ? 'native' : 'success',
               fileName: toastFileName,
               client: clientLabel,
             })
           }
         })().catch((e: unknown) => {
-          lastPushedUrl = ''
           pushedUrlSet.delete(details.url)
-          logger.warn('[sniffer]', protocol, 'auto-push error, clearing lastPushedUrl:', (e as Error).message)
+          settleHandoff(true, [details.url])
+          logger.warn('[sniffer]', protocol, 'auto-push error, keeping browser download:', (e as Error).message)
           notifyDownloadPushed(tabId, {
             status: 'failed',
             fileName: fileName || details.url,

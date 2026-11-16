@@ -65,7 +65,11 @@ function registerHandlers(): void {
 
   registerHandler('velo-get-status', async () => {
     const pairing = new PairingManager()
-    return { paired: !!pushClient, pairing: await pairing.getPairing() }
+    return {
+      paired: !!pushClient,
+      connected: !!pushClient?.isConnected(),
+      pairing: await pairing.getPairing(),
+    }
   })
 
   // === task #13: MSE 媒体用户提示 UI ===

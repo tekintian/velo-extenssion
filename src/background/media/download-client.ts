@@ -58,6 +58,27 @@ export async function setDownloadConfig(cfg: DownloadClientConfig): Promise<void
 }
 
 /**
+ * 是否配置了外部下载客户端（aria2 / ndm / velo）
+ *
+ * 默认配置即 `client: 'velo'`，但用户从未配对桌面端时 velo 并不存在。
+ * 自动接管场景要区分「真的配置了外部客户端」与「只是默认值占位」，
+ * 后者必须回退浏览器原生下载。
+ */
+function isExternalClientConfigured(cfg: DownloadClientConfig): boolean {
+  switch (cfg.client) {
+    case 'aria2':
+      return !!cfg.rpcUrl
+    case 'ndm':
+      return !!cfg.ndmUrl
+    case 'velo':
+      return false
+    case 'native':
+    default:
+      return false
+  }
+}
+
+/**
  * 发送 URL 到下载客户端
  *
  * @returns { success: boolean; queued?: boolean; pending?: boolean; unconfirmed?: boolean; message?: string }
@@ -80,11 +101,41 @@ export async function sendToDownloadClient(
     title?: string | undefined
     contentLength?: string | undefined
     priority?: string | undefined
+    /**
+     * 自动接管场景（sniffer 拦截浏览器下载 / 非媒体下载自动推送）
+     *
+     * 自动接管不会先取消浏览器下载再推送，而是「推送成功才拦截」，失败就让浏览器
+     * 原生下载继续。因此桌面端**未连接**时不能把消息塞进离线队列（队列意味着浏览器
+     * 下载已被取消、而桌面端又不在线，最终两头都没有文件），必须直接回退到
+     * chrome.downloads 原生下载。
+     */
+    autoHandoff?: boolean | undefined
+    /**
+     * 浏览器下载若被取消（拦截成功）时的回调
+     *
+     * 由调用方（downloads.onCreated 监听）提供，用于在推送成功后才取消原生下载条目。
+     */
+    onIntercepted?: (() => void) | undefined
   },
-): Promise<{ success: boolean; queued?: boolean; pending?: boolean; unconfirmed?: boolean; message?: string }> {
+): Promise<{
+  success: boolean
+  queued?: boolean
+  pending?: boolean
+  unconfirmed?: boolean
+  /**
+   * autoHandoff 场景下 velo 未连接、已改走浏览器原生下载
+   *
+   * 调用方据此把页面提示切换为「已改为浏览器原生下载」，
+   * 而不是错误地显示「已发送到 velo」。
+   */
+  nativeFallback?: boolean
+  message?: string
+}> {
   const cfg = await getDownloadConfig()
+  const pushClient = pushClientInstance
+  const pushConnected = !!pushClient?.isConnected()
 
-  if (pushClientInstance) {
+  if (pushClient && (!extra?.autoHandoff || pushConnected)) {
     try {
       const headers = buildVeloHeaders(extra, cfg.headerLevel)
       const isM3u8 = isHlsMedia(url, extra?.contentType)
@@ -107,8 +158,9 @@ export async function sendToDownloadClient(
         page_url: extra?.pageUrl,
         page_title: extra?.title,
       }
-      const result = await pushClientInstance.push(msg)
+      const result = await pushClient.push(msg)
       if (result.queued) {
+        // autoHandoff 已在上面用 pushConnected 排除，走到这里必然是用户主动点击下载
         logger.info('[download] velo 未连接，已入队:', url.slice(0, 80))
         return { success: true, queued: true, message: i18n('download_queued') }
       }
@@ -117,6 +169,7 @@ export async function sendToDownloadClient(
         return { success: true, pending: true, message: i18n('push_pending_confirm') }
       }
       logger.info('[download] pushed via PushClient:', url.slice(0, 80))
+      extra?.onIntercepted?.()
       return { success: true }
     } catch (e) {
       // 「已发出但未确认」不能回退重发：桌面端可能已建任务，回退会造成重复下载
@@ -124,12 +177,25 @@ export async function sendToDownloadClient(
         logger.warn('[download] push unconfirmed:', e.message)
         return { success: false, unconfirmed: true, message: i18n('push_unconfirmed') }
       }
-      // 桌面端明确拒绝：cfg.client 已是 velo 时不再回退（回退等于重推同一端）
+      // 桌面端明确拒绝：客户端明确配置为 velo 时不再回退（回退等于重推同一端）
       if (cfg.client === 'velo') {
         logger.warn('[download] PushClient push rejected:', (e as Error).message)
         return { success: false, message: (e as Error).message }
       }
       logger.warn('[download] PushClient push failed, falling back to config:', (e as Error).message)
+    }
+  }
+
+  if (pushClient && extra?.autoHandoff && !pushConnected) {
+    logger.info('[download] velo 未连接，自动接管改走浏览器原生下载:', url.slice(0, 80))
+  }
+
+  if (extra?.autoHandoff && !isExternalClientConfigured(cfg)) {
+    const native = await sendToNative(url, fileName)
+    return {
+      success: native.success,
+      ...(native.success ? { nativeFallback: true } : {}),
+      ...(native.message ? { message: native.message } : {}),
     }
   }
 
@@ -139,8 +205,17 @@ export async function sendToDownloadClient(
         return await sendToAria2(url, fileName, cfg, extra)
       case 'ndm':
         return await sendToNdm(url, fileName, cfg, extra)
-      case 'velo':
-        return await sendToVelo(url, fileName, cfg, extra)
+      case 'velo': {
+        if (!extra?.autoHandoff || pushConnected) {
+          return await sendToVelo(url, fileName, cfg, extra)
+        }
+        const native = await sendToNative(url, fileName)
+        return {
+          success: native.success,
+          ...(native.success ? { nativeFallback: true } : {}),
+          ...(native.message ? { message: native.message } : {}),
+        }
+      }
       case 'native':
       default:
         return await sendToNative(url, fileName)
@@ -148,6 +223,15 @@ export async function sendToDownloadClient(
   } catch (e) {
     const msg = (e as Error).message
     logger.warn('[download] send failed:', msg)
+    // 自动接管兜底：外部客户端不可用时至少让浏览器把文件下下来
+    if (extra?.autoHandoff) {
+      const native = await sendToNative(url, fileName)
+      return {
+        success: native.success,
+        ...(native.success ? { nativeFallback: true } : {}),
+        message: native.message ?? msg,
+      }
+    }
     return { success: false, message: msg }
   }
 }
