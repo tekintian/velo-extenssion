@@ -338,4 +338,4 @@ WebSocket 连接: ws://127.0.0.1:16888/download
 
 ## License
 
-MIT © Tekin
+GPLv3+ © AI.TEKIN.CN

@@ -4,7 +4,7 @@
   "description": "Velo 浏览器扩展 — 嗅探 m3u8 + 广告分片过滤 + 推送到 Velo 桌面端下载",
   "author": "tekintian <tekintian@gmail.com>",
   "homepage": "https://velo.tekin.cn/",
-  "license": "MIT",
+  "license": "GPLv3+",
   "type": "module",
   "engines": {
     "bun": ">=1.1.0"
