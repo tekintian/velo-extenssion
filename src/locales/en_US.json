@@ -639,7 +639,7 @@
     "message": "Browser native download uses Chrome built-in download manager. Click the download button on media items."
   },
   "options_velo_hint": {
-    "message": "velo (Motrix Lite) receives pushes via WebSocket. Ensure velo is running with push server enabled (default port 16888, path /ws). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
+    "message": "velo receives pushes via WebSocket. Ensure velo is running with push server enabled (default port 16888, path /ws). When HLS delivery mode is data-url, cleaned m3u8 text is pushed directly without data URL encoding."
   },
   "options_hls_delivery_mode": {
     "message": "Delivery Mode"

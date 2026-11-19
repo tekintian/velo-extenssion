@@ -6,7 +6,7 @@
  * 四种客户端:
  *   aria2   - HTTP POST JSON-RPC 到 http://host:port/jsonrpc (Motrix/aria2/FDM 通用)
  *   ndm     - WebSocket ws://host:port/download 子协议 neatextension.v1（地址可配置，默认 10007；可指向 velo 推送端口 16888 的 NDM 兼容通道）
- *   velo   - WebSocket ws://host:port JSON HlsPushMessage (velo/Motrix Lite 推送协议)
+ *   velo   - WebSocket ws://host:port JSON HlsPushMessage (velo 推送协议)
  *   native  - chrome.downloads.download (浏览器自带)
  */
 
