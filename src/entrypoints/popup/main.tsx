@@ -407,11 +407,11 @@ function Popup() {
               {DL_CLIENT_LABELS[dlClient]}
             </a>
           </span>
-          <button className="popup-tool-icon" onClick={openHlsFilterOptions} title={i18n('popup_hls_settings_short')}>
-            🛡️
+          <button className="popup-tool-icon" onClick={openHlsFilterOptions} title={i18n('popup_hls_settings_entry')}>
+            🛡️{i18n('popup_hls_settings_short')}
           </button>
           <button className="popup-tool-icon" onClick={openOptions} title={i18n('popup_open_settings_short')}>
-            ⚙️
+            ⚙️{i18n('popup_open_settings_short')}
           </button>
         </div>
       </div>

@@ -116,10 +116,10 @@
     "message": "HLS 广告过滤设置"
   },
   "popup_hls_settings_short": {
-    "message": "过滤设置"
+    "message": "HLS设置"
   },
   "popup_open_settings_short": {
-    "message": "完整设置"
+    "message": "设置"
   },
   "popup_enable_site_detect": {
     "message": "启用本站探测"
